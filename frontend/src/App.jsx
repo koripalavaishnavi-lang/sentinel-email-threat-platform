@@ -89,10 +89,9 @@ function App() {
     const formData = new FormData();
     formData.append("file", selectedFile);
 
-    try {
-     const response = await fetch(
-    "https://aegis-ai-qyed.onrender.com/api/analyze-email",
-  {
+        try {
+      const response = await fetch(
+        "https://aegis-ai-qyed.onrender.com/api/analyze-email",
         {
           method: "POST",
           body: formData,
