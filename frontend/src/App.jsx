@@ -91,7 +91,7 @@ function App() {
 
         try {
       const response = await fetch(
-        "https://aegis-ai-qyed.onrender.com/api/analyze-email",
+       "https://sentinel-email-threat-platform-1.onrender.com/api/analyze-email",
         {
           method: "POST",
           body: formData,
