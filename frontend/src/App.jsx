@@ -91,7 +91,7 @@ function App() {
 
     try {
       const response = await fetch(
-        "http://127.0.0.1:8000/api/analyze-email",
+      "https://aegis-ai-qyed.onrender.com/api/analyze-email"
         {
           method: "POST",
           body: formData,
