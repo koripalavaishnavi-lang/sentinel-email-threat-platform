@@ -67,13 +67,18 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
+
+    # Local development
     allow_origins=[
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:5174",
-    "https://sentinel-email-threat-platform-1.onrender.com",
-],
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+    ],
+
+    # Allow Render frontend subdomains
+    allow_origin_regex=r"^https://[a-zA-Z0-9-]+\.onrender\.com$",
+
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -104,11 +109,10 @@ def health():
 # ============================================================
 
 def extract_urls(text):
-
     if not text:
         return []
 
-    pattern = r'https?://[^\s<>"\']+'
+    pattern = r"""https?://[^\s<>"']+"""
 
     urls = re.findall(
         pattern,
@@ -118,16 +122,12 @@ def extract_urls(text):
     cleaned_urls = []
 
     for url in urls:
-
         url = url.rstrip(
             ".,;:!?)]}"
         )
 
         if url not in cleaned_urls:
-
-            cleaned_urls.append(
-                url
-            )
+            cleaned_urls.append(url)
 
     return cleaned_urls
 
@@ -137,41 +137,26 @@ def extract_urls(text):
 # ============================================================
 
 def extract_domains(urls):
-
     domains = []
 
     for url in urls:
-
         try:
-
-            parsed = urlparse(
-                url
-            )
+            parsed = urlparse(url)
 
             domain = parsed.netloc
 
             if "@" in domain:
+                domain = domain.split("@")[-1]
 
-                domain = domain.split(
-                    "@"
-                )[-1]
-
-            domain = domain.split(
-                ":"
-            )[0]
+            domain = domain.split(":")[0]
 
             if domain:
-
                 domain = domain.lower()
 
                 if domain not in domains:
-
-                    domains.append(
-                        domain
-                    )
+                    domains.append(domain)
 
         except Exception:
-
             continue
 
     return domains
@@ -182,11 +167,10 @@ def extract_domains(urls):
 # ============================================================
 
 def extract_ip_addresses(text):
-
     if not text:
         return []
 
-    pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
+    pattern = r"\b(?:\d{1,3}\.){3}\d{1,3}\b"
 
     candidates = re.findall(
         pattern,
@@ -196,21 +180,13 @@ def extract_ip_addresses(text):
     valid_ips = []
 
     for ip in candidates:
-
         try:
-
-            ipaddress.ip_address(
-                ip
-            )
+            ipaddress.ip_address(ip)
 
             if ip not in valid_ips:
-
-                valid_ips.append(
-                    ip
-                )
+                valid_ips.append(ip)
 
         except ValueError:
-
             continue
 
     return valid_ips
@@ -221,17 +197,11 @@ def extract_ip_addresses(text):
 # ============================================================
 
 def is_public_ip(ip):
-
     try:
-
-        address = ipaddress.ip_address(
-            ip
-        )
-
+        address = ipaddress.ip_address(ip)
         return address.is_global
 
     except ValueError:
-
         return False
 
 
@@ -240,7 +210,6 @@ def is_public_ip(ip):
 # ============================================================
 
 def get_email_body(message):
-
     body = ""
 
     if message.is_multipart():
@@ -258,26 +227,20 @@ def get_email_body(message):
 
             if (
                 content_type == "text/plain"
-                and "attachment"
-                not in disposition.lower()
+                and "attachment" not in disposition.lower()
             ):
-
                 try:
-
                     body += part.get_content()
 
                 except Exception:
-
                     pass
 
     else:
 
         try:
-
             body = message.get_content()
 
         except Exception:
-
             body = ""
 
     return body
@@ -288,7 +251,6 @@ def get_email_body(message):
 # ============================================================
 
 def get_received_headers(message):
-
     return message.get_all(
         "Received",
         []
@@ -314,38 +276,24 @@ def analyze_authentication(message):
     )
 
     if spf:
-
         spf_status = spf
-
     else:
-
         spf_status = "Not Found"
 
     if dkim:
-
         dkim_status = "Found"
-
     else:
-
         dkim_status = "Not Found"
 
     if authentication_results:
-
         auth_results = authentication_results
-
     else:
-
         auth_results = "Not available"
 
     return {
-
         "spf": spf_status,
-
         "dkim": dkim_status,
-
-        "authentication_results":
-            auth_results
-
+        "authentication_results": auth_results
     }
 
 
@@ -356,59 +304,32 @@ def analyze_authentication(message):
 def get_ip_geolocation(ip):
 
     if not is_public_ip(ip):
-
         return None
 
     try:
 
         response = requests.get(
-
             f"https://ipapi.co/{ip}/json/",
-
             timeout=5
-
         )
 
         if response.status_code != 200:
-
             return None
 
         data = response.json()
 
         return {
-
             "ip": ip,
-
-            "country":
-                data.get("country_name"),
-
-            "country_code":
-                data.get("country_code"),
-
-            "region":
-                data.get("region"),
-
-            "city":
-                data.get("city"),
-
-            "postal":
-                data.get("postal"),
-
-            "latitude":
-                data.get("latitude"),
-
-            "longitude":
-                data.get("longitude"),
-
-            "timezone":
-                data.get("timezone"),
-
-            "asn":
-                data.get("asn"),
-
-            "organization":
-                data.get("org")
-
+            "country": data.get("country_name"),
+            "country_code": data.get("country_code"),
+            "region": data.get("region"),
+            "city": data.get("city"),
+            "postal": data.get("postal"),
+            "latitude": data.get("latitude"),
+            "longitude": data.get("longitude"),
+            "timezone": data.get("timezone"),
+            "asn": data.get("asn"),
+            "organization": data.get("org")
         }
 
     except Exception as e:
@@ -427,20 +348,14 @@ def get_ip_geolocation(ip):
 def virus_total_headers():
 
     return {
-
-        "x-apikey":
-            VIRUSTOTAL_API_KEY,
-
-        "Accept":
-            "application/json"
-
+        "x-apikey": VIRUSTOTAL_API_KEY,
+        "Accept": "application/json"
     }
 
 
 def normalize_vt_status(stats):
 
     if not stats:
-
         return "UNKNOWN"
 
     malicious = stats.get(
@@ -454,11 +369,9 @@ def normalize_vt_status(stats):
     )
 
     if malicious > 0:
-
         return "MALICIOUS"
 
     if suspicious > 0:
-
         return "SUSPICIOUS"
 
     return "CLEAN"
@@ -467,7 +380,6 @@ def normalize_vt_status(stats):
 def calculate_vt_confidence(stats):
 
     if not stats:
-
         return 0
 
     malicious = stats.get(
@@ -498,7 +410,6 @@ def calculate_vt_confidence(stats):
     )
 
     if total == 0:
-
         return 0
 
     threat_count = (
@@ -518,25 +429,15 @@ def calculate_vt_confidence(stats):
 def check_virustotal_ip(ip):
 
     result = {
-
         "indicator": ip,
-
         "type": "IP",
-
         "status": "UNKNOWN",
-
         "confidence": 0,
-
         "source": "VirusTotal",
-
         "malicious": 0,
-
         "suspicious": 0,
-
         "harmless": 0,
-
         "undetected": 0
-
     }
 
     if not VIRUSTOTAL_API_KEY:
@@ -550,13 +451,9 @@ def check_virustotal_ip(ip):
     try:
 
         response = requests.get(
-
             f"https://www.virustotal.com/api/v3/ip_addresses/{ip}",
-
             headers=virus_total_headers(),
-
             timeout=10
-
         )
 
         if response.status_code != 200:
@@ -621,25 +518,15 @@ def check_virustotal_ip(ip):
 def check_virustotal_domain(domain):
 
     result = {
-
         "indicator": domain,
-
         "type": "DOMAIN",
-
         "status": "UNKNOWN",
-
         "confidence": 0,
-
         "source": "VirusTotal",
-
         "malicious": 0,
-
         "suspicious": 0,
-
         "harmless": 0,
-
         "undetected": 0
-
     }
 
     if not VIRUSTOTAL_API_KEY:
@@ -653,13 +540,9 @@ def check_virustotal_domain(domain):
     try:
 
         response = requests.get(
-
             f"https://www.virustotal.com/api/v3/domains/{domain}",
-
             headers=virus_total_headers(),
-
             timeout=10
-
         )
 
         if response.status_code != 200:
@@ -731,25 +614,15 @@ def encode_url_for_virustotal(url):
 def check_virustotal_url(url):
 
     result = {
-
         "indicator": url,
-
         "type": "URL",
-
         "status": "UNKNOWN",
-
         "confidence": 0,
-
         "source": "VirusTotal",
-
         "malicious": 0,
-
         "suspicious": 0,
-
         "harmless": 0,
-
         "undetected": 0
-
     }
 
     if not VIRUSTOTAL_API_KEY:
@@ -767,13 +640,9 @@ def check_virustotal_url(url):
         )
 
         response = requests.get(
-
             f"https://www.virustotal.com/api/v3/urls/{url_id}",
-
             headers=virus_total_headers(),
-
             timeout=10
-
         )
 
         if response.status_code != 200:
@@ -838,27 +707,16 @@ def check_virustotal_url(url):
 def check_abuseipdb(ip):
 
     result = {
-
         "indicator": ip,
-
         "type": "IP",
-
         "status": "UNKNOWN",
-
         "confidence": 0,
-
         "source": "AbuseIPDB",
-
         "abuse_confidence_score": 0,
-
         "total_reports": 0,
-
         "country_code": None,
-
         "isp": None,
-
         "domain": None
-
     }
 
     if not ABUSEIPDB_API_KEY:
@@ -880,21 +738,16 @@ def check_abuseipdb(ip):
     try:
 
         response = requests.get(
-
             "https://api.abuseipdb.com/api/v2/check",
-
             headers={
                 "Key": ABUSEIPDB_API_KEY,
                 "Accept": "application/json"
             },
-
             params={
                 "ipAddress": ip,
                 "maxAgeInDays": 90
             },
-
             timeout=10
-
         )
 
         if response.status_code != 200:
@@ -978,13 +831,9 @@ def local_ip_intelligence(ip):
     known_ips = {
 
         "8.8.8.8": {
-
             "status": "CLEAN",
-
             "confidence": 95,
-
             "source": "SENTINEL Test Intelligence"
-
         }
 
     }
@@ -994,17 +843,11 @@ def local_ip_intelligence(ip):
         data = known_ips[ip]
 
         return {
-
             "indicator": ip,
-
             "type": "IP",
-
             "status": data["status"],
-
             "confidence": data["confidence"],
-
             "source": data["source"]
-
         }
 
     return None
@@ -1015,33 +858,21 @@ def local_domain_intelligence(domain):
     known_domains = {
 
         "example.com": {
-
             "status": "CLEAN",
-
             "confidence": 90,
-
             "source": "SENTINEL Test Intelligence"
-
         },
 
         "google.com": {
-
             "status": "CLEAN",
-
             "confidence": 90,
-
             "source": "SENTINEL Test Intelligence"
-
         },
 
         "microsoft.com": {
-
             "status": "CLEAN",
-
             "confidence": 90,
-
             "source": "SENTINEL Test Intelligence"
-
         }
 
     }
@@ -1053,21 +884,13 @@ def local_domain_intelligence(domain):
         data = known_domains[domain]
 
         return {
-
             "indicator": domain,
-
             "type": "DOMAIN",
-
             "status": data["status"],
-
             "confidence": data["confidence"],
-
             "source": data["source"],
-
             "malicious": 0,
-
             "suspicious": 0
-
         }
 
     return None
@@ -1080,6 +903,7 @@ def local_domain_intelligence(domain):
 def check_ip_threat_intelligence(ip):
 
     # Real APIs first
+
     virustotal = check_virustotal_ip(
         ip
     )
@@ -1089,14 +913,12 @@ def check_ip_threat_intelligence(ip):
     )
 
     statuses = [
-
         virustotal["status"],
-
         abuseipdb["status"]
-
     ]
 
     # If either API has a real result
+
     if (
         "MALICIOUS" in statuses
         or
@@ -1118,17 +940,14 @@ def check_ip_threat_intelligence(ip):
             overall_status = "CLEAN"
 
         confidence_values = [
-
             virustotal.get(
                 "confidence",
                 0
             ),
-
             abuseipdb.get(
                 "confidence",
                 0
             )
-
         ]
 
         available = [
@@ -1144,28 +963,18 @@ def check_ip_threat_intelligence(ip):
         )
 
         return {
-
             "indicator": ip,
-
             "type": "IP",
-
             "status": overall_status,
-
             "confidence": confidence,
-
             "sources": {
-
-                "virustotal":
-                    virustotal,
-
-                "abuseipdb":
-                    abuseipdb
-
+                "virustotal": virustotal,
+                "abuseipdb": abuseipdb
             }
-
         }
 
     # Local fallback for demo/testing
+
     local_result = local_ip_intelligence(
         ip
     )
@@ -1173,55 +982,27 @@ def check_ip_threat_intelligence(ip):
     if local_result:
 
         return {
-
             "indicator": ip,
-
             "type": "IP",
-
-            "status":
-                local_result["status"],
-
-            "confidence":
-                local_result["confidence"],
-
-            "source":
-                local_result["source"],
-
+            "status": local_result["status"],
+            "confidence": local_result["confidence"],
+            "source": local_result["source"],
             "sources": {
-
-                "virustotal":
-                    virustotal,
-
-                "abuseipdb":
-                    abuseipdb
-
+                "virustotal": virustotal,
+                "abuseipdb": abuseipdb
             }
-
         }
 
     return {
-
         "indicator": ip,
-
         "type": "IP",
-
         "status": "UNKNOWN",
-
         "confidence": 0,
-
-        "source":
-            "SENTINEL Local Intelligence",
-
+        "source": "SENTINEL Local Intelligence",
         "sources": {
-
-            "virustotal":
-                virustotal,
-
-            "abuseipdb":
-                abuseipdb
-
+            "virustotal": virustotal,
+            "abuseipdb": abuseipdb
         }
-
     }
 
 
@@ -1236,17 +1017,17 @@ def check_domain_threat_intelligence(domain):
     )
 
     # If VirusTotal returned useful data
-    if result["status"] != "UNKNOWN":
 
+    if result["status"] != "UNKNOWN":
         return result
 
     # Local fallback
+
     local_result = local_domain_intelligence(
         domain
     )
 
     if local_result:
-
         return local_result
 
     return result
@@ -1335,11 +1116,9 @@ def calculate_risk(
     if ip_addresses:
 
         public_ip_count = sum(
-
             1
             for ip in ip_addresses
             if is_public_ip(ip)
-
         )
 
         score += min(
@@ -1358,39 +1137,22 @@ def calculate_risk(
     suspicious_keywords = [
 
         "urgent",
-
         "verify your account",
-
         "verify account",
-
         "password",
-
         "login",
-
         "click here",
-
         "security alert",
-
         "account suspended",
-
         "account locked",
-
         "confirm your account",
-
         "bank",
-
         "payment required",
-
         "reset password",
-
         "limited time",
-
         "winner",
-
         "congratulations",
-
         "invoice",
-
         "wire transfer"
 
     ]
@@ -1419,26 +1181,20 @@ def calculate_risk(
     # Threat intelligence
 
     all_indicators = (
-
         threat_intelligence.get(
             "ips",
             []
         )
-
         +
-
         threat_intelligence.get(
             "domains",
             []
         )
-
         +
-
         threat_intelligence.get(
             "urls",
             []
         )
-
     )
 
     malicious_indicators = []
@@ -1506,13 +1262,9 @@ def calculate_risk(
         risk_level = "LOW"
 
     return {
-
         "score": score,
-
         "level": risk_level,
-
         "reasons": reasons
-
     }
 
 
@@ -1532,11 +1284,8 @@ async def analyze_email(
         if not file_bytes:
 
             return {
-
                 "success": False,
-
                 "error": "Uploaded file is empty"
-
             }
 
         # Parse email
@@ -1743,21 +1492,16 @@ async def analyze_email(
         # ====================================================
 
         all_intelligence = (
-
             ip_intelligence
             +
             domain_intelligence
             +
             url_intelligence
-
         )
 
         malicious_count = 0
-
         suspicious_count = 0
-
         clean_count = 0
-
         unknown_count = 0
 
         for indicator in all_intelligence:
@@ -1785,14 +1529,11 @@ async def analyze_email(
 
         threat_intelligence = {
 
-            "ips":
-                ip_intelligence,
+            "ips": ip_intelligence,
 
-            "domains":
-                domain_intelligence,
+            "domains": domain_intelligence,
 
-            "urls":
-                url_intelligence,
+            "urls": url_intelligence,
 
             "summary": {
 
@@ -1833,8 +1574,7 @@ async def analyze_email(
 
             authentication=authentication,
 
-            threat_intelligence=
-                threat_intelligence
+            threat_intelligence=threat_intelligence
 
         )
 
@@ -1936,13 +1676,12 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
-
         app,
-
-        host="127.0.0.1",
-
-        port=8000,
-
-        reload=True
-
+        host="0.0.0.0",
+        port=int(
+            os.getenv(
+                "PORT",
+                "8000"
+            )
+        )
     )
