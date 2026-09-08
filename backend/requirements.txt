@@ -4,3 +4,6 @@ python-multipart
 requests
 python-dotenv
 pypdf
+google-auth
+google-auth-oauthlib
+google-api-python-client
