@@ -74,14 +74,21 @@ function App() {
     }
   }, [history]);
 
-  // Select .eml file
+  // Select .eml or .pdf file
   const handleFile = (e) => {
     const selected = e.target.files?.[0];
 
     if (!selected) return;
 
-    if (!selected.name.toLowerCase().endsWith(".eml")) {
-      setError("Please select a valid .eml email file.");
+    const filename = selected.name.toLowerCase();
+
+    const isEml = filename.endsWith(".eml");
+    const isPdf = filename.endsWith(".pdf");
+
+    if (!isEml && !isPdf) {
+      setError(
+        "Please select a valid .eml or .pdf file."
+      );
       setFile(null);
       return;
     }
@@ -90,10 +97,12 @@ function App() {
     setError("");
   };
 
-  // Analyze email
+  // Analyze email/document
   const analyze = async () => {
     if (!file) {
-      setError("Please select an .eml file first.");
+      setError(
+        "Please select an .eml or .pdf file first."
+      );
       return;
     }
 
@@ -113,14 +122,17 @@ function App() {
       );
 
       if (!response.ok) {
-        throw new Error(`Backend returned ${response.status}`);
+        throw new Error(
+          `Backend returned ${response.status}`
+        );
       }
 
       const result = await response.json();
 
       if (!result.success) {
         throw new Error(
-          result.message || "Email analysis failed."
+          result.message ||
+            "Email/document analysis failed."
         );
       }
 
@@ -133,7 +145,12 @@ function App() {
         filename:
           result.email?.filename ||
           file?.name ||
-          "Unknown Email",
+          "Unknown File",
+        fileType: file?.name
+          ?.toLowerCase()
+          .endsWith(".pdf")
+          ? "PDF"
+          : "EML",
         sender:
           result.email?.sender ||
           "Unknown Sender",
@@ -143,22 +160,26 @@ function App() {
         subject:
           result.email?.subject ||
           "No Subject",
-        riskScore: Number(result.risk?.score || 0),
+        riskScore: Number(
+          result.risk?.score || 0
+        ),
         riskLevel:
           result.risk?.level ||
           "LOW",
         malicious:
           Number(
-            result.threat_intelligence?.summary?.malicious || 0
+            result.threat_intelligence?.summary
+              ?.malicious || 0
           ),
         suspicious:
           Number(
-            result.threat_intelligence?.summary?.suspicious || 0
+            result.threat_intelligence?.summary
+              ?.suspicious || 0
           ),
         totalIndicators:
           Number(
-            result.threat_intelligence?.summary?.total_indicators ||
-              0
+            result.threat_intelligence?.summary
+              ?.total_indicators || 0
           ),
         data: result,
       };
@@ -178,7 +199,7 @@ function App() {
       console.error(err);
 
       setError(
-        "Unable to connect to the backend. Please make sure the backend is running."
+        "Unable to connect to the backend or analyze the file. Please try again."
       );
     } finally {
       setLoading(false);
@@ -192,6 +213,10 @@ function App() {
     setError("");
     setPage("Dashboard");
 
+    if (uploadRef.current) {
+      uploadRef.current.value = "";
+    }
+
     window.scrollTo({
       top: 0,
       behavior: "smooth",
@@ -201,6 +226,7 @@ function App() {
   // Navigation
   const dashboard = () => {
     setPage("Dashboard");
+
     window.scrollTo({
       top: 0,
       behavior: "smooth",
@@ -280,7 +306,9 @@ function App() {
   const urls = arr(forensic.urls);
   const domains = arr(forensic.domains);
   const ips = arr(forensic.ip_addresses);
-  const received = arr(forensic.received_headers);
+  const received = arr(
+    forensic.received_headers
+  );
 
   const geo = arr(data?.geolocation);
 
@@ -307,9 +335,17 @@ function App() {
   const riskClass = (level) => {
     const v = String(level).toLowerCase();
 
-    if (v.includes("critical")) return "risk-critical";
-    if (v.includes("high")) return "risk-high";
-    if (v.includes("medium")) return "risk-medium";
+    if (v.includes("critical")) {
+      return "risk-critical";
+    }
+
+    if (v.includes("high")) {
+      return "risk-high";
+    }
+
+    if (v.includes("medium")) {
+      return "risk-medium";
+    }
 
     return "risk-low";
   };
@@ -339,35 +375,43 @@ function App() {
     0
   );
 
-  const highRiskCount = history.filter((item) =>
-    ["HIGH", "CRITICAL"].includes(
-      String(item.riskLevel || "").toUpperCase()
-    )
+  const highRiskCount = history.filter(
+    (item) =>
+      ["HIGH", "CRITICAL"].includes(
+        String(
+          item.riskLevel || ""
+        ).toUpperCase()
+      )
   ).length;
 
   const totalInvestigations = history.length;
 
   const lowRiskCount = history.filter(
     (item) =>
-      String(item.riskLevel || "").toUpperCase() === "LOW"
+      String(
+        item.riskLevel || ""
+      ).toUpperCase() === "LOW"
   ).length;
 
   const mediumRiskCount = history.filter(
     (item) =>
-      String(item.riskLevel || "").toUpperCase() === "MEDIUM"
+      String(
+        item.riskLevel || ""
+      ).toUpperCase() === "MEDIUM"
   ).length;
 
   const criticalRiskCount = history.filter(
     (item) =>
-      String(item.riskLevel || "").toUpperCase() ===
-      "CRITICAL"
+      String(
+        item.riskLevel || ""
+      ).toUpperCase() === "CRITICAL"
   ).length;
 
   // PDF report
   const generateReport = () => {
     if (!data) {
       setError(
-        "Analyze an email before generating a report."
+        "Analyze an email or PDF before generating a report."
       );
       return;
     }
@@ -388,35 +432,50 @@ function App() {
     const urlHtml =
       urls.length > 0
         ? urls
-            .map((x) => `<li>${esc(x)}</li>`)
+            .map(
+              (x) =>
+                `<li>${esc(x)}</li>`
+            )
             .join("")
         : "<li>None detected</li>";
 
     const domainHtml =
       domains.length > 0
         ? domains
-            .map((x) => `<li>${esc(x)}</li>`)
+            .map(
+              (x) =>
+                `<li>${esc(x)}</li>`
+            )
             .join("")
         : "<li>None detected</li>";
 
     const ipHtml =
       ips.length > 0
         ? ips
-            .map((x) => `<li>${esc(x)}</li>`)
+            .map(
+              (x) =>
+                `<li>${esc(x)}</li>`
+            )
             .join("")
         : "<li>None detected</li>";
 
     const headerHtml =
       received.length > 0
         ? received
-            .map((x) => `<li>${esc(x)}</li>`)
+            .map(
+              (x) =>
+                `<li>${esc(x)}</li>`
+            )
             .join("")
         : "<li>None detected</li>";
 
     const reasonHtml =
       reasons.length > 0
         ? reasons
-            .map((x) => `<li>${esc(x)}</li>`)
+            .map(
+              (x) =>
+                `<li>${esc(x)}</li>`
+            )
             .join("")
         : "<li>No suspicious indicators detected.</li>";
 
@@ -427,16 +486,20 @@ function App() {
               (x) => `
                 <tr>
                   <td>${esc(
-                    x.indicator || "Unknown"
+                    x.indicator ||
+                      "Unknown"
                   )}</td>
                   <td>${esc(
-                    x.type || "Unknown"
+                    x.type ||
+                      "Unknown"
                   )}</td>
                   <td>${esc(
-                    x.status || "UNKNOWN"
+                    x.status ||
+                      "UNKNOWN"
                   )}</td>
                   <td>${esc(
-                    x.source || "Unknown"
+                    x.source ||
+                      "Unknown"
                   )}</td>
                   <td>${esc(
                     x.confidence ?? 0
@@ -463,16 +526,20 @@ function App() {
                     g.ip || "Unknown"
                   )}</td>
                   <td>${esc(
-                    g.country || "Unknown"
+                    g.country ||
+                      "Unknown"
                   )}</td>
                   <td>${esc(
-                    g.region || "Unknown"
+                    g.region ||
+                      "Unknown"
                   )}</td>
                   <td>${esc(
-                    g.city || "Unknown"
+                    g.city ||
+                      "Unknown"
                   )}</td>
                   <td>${esc(
-                    g.organization || "Unknown"
+                    g.organization ||
+                      "Unknown"
                   )}</td>
                 </tr>
               `
@@ -593,7 +660,9 @@ function App() {
 
         <div class="sub">
           Report generated:
-          ${esc(new Date().toLocaleString())}
+          ${esc(
+            new Date().toLocaleString()
+          )}
         </div>
 
         <div class="risk">
@@ -611,7 +680,7 @@ function App() {
           </strong>
         </div>
 
-        <h2>Email Information</h2>
+        <h2>File Information</h2>
 
         <div class="grid">
           <div class="item">
@@ -621,6 +690,17 @@ function App() {
                 file?.name ||
                 "Unknown"
             )}
+          </div>
+
+          <div class="item">
+            <div class="label">File Type</div>
+            ${
+              file?.name
+                ?.toLowerCase()
+                .endsWith(".pdf")
+                ? "PDF"
+                : "EML"
+            }
           </div>
 
           <div class="item">
@@ -649,7 +729,9 @@ function App() {
 
           <div class="item">
             <div class="label">Date</div>
-            ${esc(formatDate(email.date))}
+            ${esc(
+              formatDate(email.date)
+            )}
           </div>
 
           <div class="item">
@@ -703,7 +785,7 @@ function App() {
             <div class="label">SPF</div>
             ${esc(
               auth.spf ||
-                "Not Found"
+                "Not Found / Not Available"
             )}
           </div>
 
@@ -711,7 +793,7 @@ function App() {
             <div class="label">DKIM</div>
             ${esc(
               auth.dkim ||
-                "Not Found"
+                "Not Found / Not Available"
             )}
           </div>
 
@@ -745,7 +827,7 @@ function App() {
           </tbody>
         </table>
 
-        <h2>Email Body</h2>
+        <h2>Extracted Content</h2>
 
         <pre>${esc(body)}</pre>
 
@@ -786,11 +868,12 @@ function App() {
     >
       <div className="panel-header">
         <div>
-          <h3>Analyze Email</h3>
+          <h3>Analyze Email / Document</h3>
 
           <p>
-            Upload an email file for forensic and
-            threat intelligence analysis.
+            Upload an .eml or .pdf file for
+            forensic and threat intelligence
+            analysis.
           </p>
         </div>
 
@@ -805,29 +888,55 @@ function App() {
       </div>
 
       <div className="upload-box">
-        <div className="upload-icon">✉</div>
+        <div className="upload-icon">
+          {file?.name
+            ?.toLowerCase()
+            .endsWith(".pdf")
+            ? "📄"
+            : "✉"}
+        </div>
 
         <h3>
           {file
             ? file.name
-            : "Upload an email file"}
+            : "Upload an .eml or .pdf file"}
         </h3>
 
         <p>
-          Select an <strong>.eml</strong> file to
-          begin analysis.
+          Select an <strong>.eml</strong> or{" "}
+          <strong>.pdf</strong> file to begin
+          analysis.
         </p>
 
         <label className="file-button">
-          Choose Email File
+          Choose File
 
           <input
             type="file"
-            accept=".eml,message/rfc822"
+            accept=".eml,.pdf,message/rfc822,application/pdf"
             onChange={handleFile}
             hidden
           />
         </label>
+
+        {file && (
+          <div
+            style={{
+              marginTop: 12,
+              fontSize: 13,
+              opacity: 0.7,
+            }}
+          >
+            File type:{" "}
+            <strong>
+              {file.name
+                .toLowerCase()
+                .endsWith(".pdf")
+                ? "PDF Document"
+                : "EML Email"}
+            </strong>
+          </div>
+        )}
 
         {file && (
           <button
@@ -837,7 +946,7 @@ function App() {
           >
             {loading
               ? "Analyzing..."
-              : "Analyze Email"}
+              : "Analyze File"}
           </button>
         )}
       </div>
@@ -854,14 +963,13 @@ function App() {
   const Dashboard = () => (
     <div>
       <section className="stats-grid">
-
         <div className="stat-card">
           <div className="stat-icon blue">
             ✉
           </div>
 
           <div>
-            <span>Emails Analyzed</span>
+            <span>Files Analyzed</span>
             <strong>{totalEmails}</strong>
           </div>
         </div>
@@ -898,13 +1006,14 @@ function App() {
             <strong>{totalInvestigations}</strong>
           </div>
         </div>
-
       </section>
 
       <section className="panel">
         <div className="panel-header">
           <div>
-            <h3>Security Operations Overview</h3>
+            <h3>
+              Security Operations Overview
+            </h3>
 
             <p>
               Current investigation activity and
@@ -916,7 +1025,7 @@ function App() {
             className="primary-button"
             onClick={uploadPage}
           >
-            + Analyze Email
+            + Analyze File
           </button>
         </div>
 
@@ -925,61 +1034,60 @@ function App() {
             <h3>No Investigations Yet</h3>
 
             <p>
-              Upload an .eml file to begin your
-              first SENTINEL investigation.
+              Upload an .eml or .pdf file to
+              begin your first SENTINEL
+              investigation.
             </p>
 
             <button
               className="primary-button"
               onClick={uploadPage}
             >
-              Analyze Email
+              Analyze File
             </button>
           </div>
         ) : (
-          <>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns:
-                  "repeat(auto-fit, minmax(180px, 1fr))",
-                gap: 15,
-                marginTop: 20,
-              }}
-            >
-              <div className="indicator-card">
-                <span className="indicator-number">
-                  {lowRiskCount}
-                </span>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(180px, 1fr))",
+              gap: 15,
+              marginTop: 20,
+            }}
+          >
+            <div className="indicator-card">
+              <span className="indicator-number">
+                {lowRiskCount}
+              </span>
 
-                <strong>Low Risk</strong>
-              </div>
-
-              <div className="indicator-card">
-                <span className="indicator-number">
-                  {mediumRiskCount}
-                </span>
-
-                <strong>Medium Risk</strong>
-              </div>
-
-              <div className="indicator-card">
-                <span className="indicator-number">
-                  {highRiskCount}
-                </span>
-
-                <strong>High Risk</strong>
-              </div>
-
-              <div className="indicator-card">
-                <span className="indicator-number">
-                  {criticalRiskCount}
-                </span>
-
-                <strong>Critical</strong>
-              </div>
+              <strong>Low Risk</strong>
             </div>
-          </>
+
+            <div className="indicator-card">
+              <span className="indicator-number">
+                {mediumRiskCount}
+              </span>
+
+              <strong>Medium Risk</strong>
+            </div>
+
+            <div className="indicator-card">
+              <span className="indicator-number">
+                {highRiskCount}
+              </span>
+
+              <strong>High Risk</strong>
+            </div>
+
+            <div className="indicator-card">
+              <span className="indicator-number">
+                {criticalRiskCount}
+              </span>
+
+              <strong>Critical</strong>
+            </div>
+          </div>
         )}
       </section>
 
@@ -990,13 +1098,16 @@ function App() {
               <h3>Recent Investigations</h3>
 
               <p>
-                Latest email security investigations.
+                Latest file security
+                investigations.
               </p>
             </div>
 
             <button
               className="secondary-button"
-              onClick={() => setPage("History")}
+              onClick={() =>
+                setPage("History")
+              }
             >
               View All
             </button>
@@ -1026,7 +1137,8 @@ function App() {
                         overflow: "hidden",
                         textOverflow:
                           "ellipsis",
-                        whiteSpace: "nowrap",
+                        whiteSpace:
+                          "nowrap",
                       }}
                     >
                       {item.subject ||
@@ -1098,7 +1210,7 @@ function App() {
           <h3>Investigation History</h3>
 
           <p>
-            Review previously analyzed emails
+            Review previously analyzed files
             stored in this browser.
           </p>
         </div>
@@ -1115,18 +1227,20 @@ function App() {
 
       {history.length === 0 ? (
         <div className="empty-state">
-          <h3>No Investigation History</h3>
+          <h3>
+            No Investigation History
+          </h3>
 
           <p>
-            Completed email investigations will
-            appear here.
+            Completed file investigations
+            will appear here.
           </p>
 
           <button
             className="primary-button"
             onClick={uploadPage}
           >
-            Analyze Email
+            Analyze File
           </button>
         </div>
       ) : (
@@ -1165,7 +1279,9 @@ function App() {
                       margin: "4px 0",
                     }}
                   >
-                    <strong>File:</strong>{" "}
+                    <strong>
+                      File:
+                    </strong>{" "}
                     {item.filename}
                   </p>
 
@@ -1174,7 +1290,21 @@ function App() {
                       margin: "4px 0",
                     }}
                   >
-                    <strong>Sender:</strong>{" "}
+                    <strong>
+                      Type:
+                    </strong>{" "}
+                    {item.fileType ||
+                      "EML"}
+                  </p>
+
+                  <p
+                    style={{
+                      margin: "4px 0",
+                    }}
+                  >
+                    <strong>
+                      Sender:
+                    </strong>{" "}
                     {item.sender}
                   </p>
 
@@ -1183,7 +1313,9 @@ function App() {
                       margin: "4px 0",
                     }}
                   >
-                    <strong>Analyzed:</strong>{" "}
+                    <strong>
+                      Analyzed:
+                    </strong>{" "}
                     {formatDate(
                       item.analyzedAt
                     )}
@@ -1214,8 +1346,8 @@ function App() {
                   </div>
 
                   <small>
-                    {item.malicious || 0} malicious
-                    indicators
+                    {item.malicious || 0}{" "}
+                    malicious indicators
                   </small>
                 </div>
 
@@ -1241,17 +1373,20 @@ function App() {
       return (
         <section className="panel">
           <div className="empty-state">
-            <h3>No Investigation Available</h3>
+            <h3>
+              No Investigation Available
+            </h3>
 
             <p>
-              Upload and analyze an email to begin.
+              Upload and analyze an .eml or .pdf
+              file to begin.
             </p>
 
             <button
               className="primary-button"
               onClick={uploadPage}
             >
-              Analyze Email
+              Analyze File
             </button>
           </div>
         </section>
@@ -1262,17 +1397,17 @@ function App() {
       <div>
         <div className="success-message">
           <span>✓</span>
-          Email analyzed successfully
+          File analyzed successfully
         </div>
 
         <section className="panel">
           <div className="panel-header">
             <div>
-              <h3>Email Information</h3>
+              <h3>File Information</h3>
 
               <p>
                 Basic metadata extracted from the
-                email.
+                submitted file.
               </p>
             </div>
           </div>
@@ -1285,6 +1420,18 @@ function App() {
                 {email.filename ||
                   file?.name ||
                   "Not available"}
+              </strong>
+            </div>
+
+            <div className="info-item">
+              <span>File Type</span>
+
+              <strong>
+                {file?.name
+                  ?.toLowerCase()
+                  .endsWith(".pdf")
+                  ? "PDF"
+                  : "EML"}
               </strong>
             </div>
 
@@ -1340,7 +1487,8 @@ function App() {
               <h3>Threat Assessment</h3>
 
               <p>
-                Automated forensic risk assessment.
+                Automated forensic risk
+                assessment.
               </p>
             </div>
 
@@ -1379,7 +1527,8 @@ function App() {
                 </ul>
               ) : (
                 <p>
-                  No suspicious indicators detected.
+                  No suspicious indicators
+                  detected.
                 </p>
               )}
             </div>
@@ -1389,7 +1538,9 @@ function App() {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <h3>Detailed Threat Analysis</h3>
+              <h3>
+                Detailed Threat Analysis
+              </h3>
 
               <p>
                 Consolidated threat intelligence
@@ -1405,7 +1556,9 @@ function App() {
                   indicators.length}
               </span>
 
-              <strong>Total Indicators</strong>
+              <strong>
+                Total Indicators
+              </strong>
             </div>
 
             <div className="indicator-card">
@@ -1464,7 +1617,8 @@ function App() {
                         display: "flex",
                         justifyContent:
                           "space-between",
-                        alignItems: "center",
+                        alignItems:
+                          "center",
                         gap: 15,
                       }}
                     >
@@ -1493,6 +1647,7 @@ function App() {
                     >
                       <div className="info-item">
                         <span>Type</span>
+
                         <strong>
                           {item.type ||
                             "Unknown"}
@@ -1501,6 +1656,7 @@ function App() {
 
                       <div className="info-item">
                         <span>Source</span>
+
                         <strong>
                           {item.source ||
                             "Threat Intelligence"}
@@ -1509,6 +1665,7 @@ function App() {
 
                       <div className="info-item">
                         <span>Confidence</span>
+
                         <strong>
                           {item.confidence ??
                             0}
@@ -1518,6 +1675,7 @@ function App() {
 
                       <div className="info-item">
                         <span>Malicious</span>
+
                         <strong>
                           {item.malicious ??
                             0}
@@ -1526,6 +1684,7 @@ function App() {
 
                       <div className="info-item">
                         <span>Suspicious</span>
+
                         <strong>
                           {item.suspicious ??
                             0}
@@ -1534,6 +1693,7 @@ function App() {
 
                       <div className="info-item">
                         <span>Harmless</span>
+
                         <strong>
                           {item.harmless ??
                             0}
@@ -1542,6 +1702,7 @@ function App() {
 
                       <div className="info-item">
                         <span>Undetected</span>
+
                         <strong>
                           {item.undetected ??
                             0}
@@ -1589,7 +1750,9 @@ function App() {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <h3>Investigation Summary</h3>
+              <h3>
+                Investigation Summary
+              </h3>
 
               <p>
                 High-level findings from the
@@ -1628,7 +1791,9 @@ function App() {
                 {indicators.length}
               </span>
 
-              <strong>Threat Indicators</strong>
+              <strong>
+                Threat Indicators
+              </strong>
             </div>
           </div>
         </section>
@@ -1639,7 +1804,8 @@ function App() {
               <h3>Forensic Indicators</h3>
 
               <p>
-                Indicators extracted from the email.
+                Indicators extracted from the
+                submitted file.
               </p>
             </div>
           </div>
@@ -1674,7 +1840,9 @@ function App() {
                 {received.length}
               </span>
 
-              <strong>Received Headers</strong>
+              <strong>
+                Received Headers
+              </strong>
             </div>
           </div>
 
@@ -1728,6 +1896,22 @@ function App() {
               </div>
             </div>
           )}
+
+          {urls.length === 0 &&
+            domains.length === 0 &&
+            ips.length === 0 && (
+              <div
+                className="empty-state"
+                style={{
+                  marginTop: 20,
+                }}
+              >
+                <p>
+                  No forensic indicators were
+                  extracted from this file.
+                </p>
+              </div>
+            )}
         </section>
 
         <section className="panel">
@@ -1747,7 +1931,8 @@ function App() {
               <span>SPF</span>
 
               <strong>
-                {auth.spf || "Not Found"}
+                {auth.spf ||
+                  "Not Found / Not Available"}
               </strong>
             </div>
 
@@ -1755,7 +1940,8 @@ function App() {
               <span>DKIM</span>
 
               <strong>
-                {auth.dkim || "Not Found"}
+                {auth.dkim ||
+                  "Not Found / Not Available"}
               </strong>
             </div>
 
@@ -1776,7 +1962,9 @@ function App() {
           <section className="panel">
             <div className="panel-header">
               <div>
-                <h3>Threat Intelligence</h3>
+                <h3>
+                  Threat Intelligence
+                </h3>
 
                 <p>
                   External intelligence results.
@@ -1821,42 +2009,44 @@ function App() {
 
             {indicators.length > 0 && (
               <div style={{ marginTop: 20 }}>
-                {indicators.map((item, i) => (
-                  <div
-                    className="panel"
-                    key={i}
-                    style={{
-                      marginBottom: 12,
-                    }}
-                  >
-                    <strong>
-                      {item.indicator ||
-                        "Unknown"}
-                    </strong>
+                {indicators.map(
+                  (item, i) => (
+                    <div
+                      className="panel"
+                      key={i}
+                      style={{
+                        marginBottom: 12,
+                      }}
+                    >
+                      <strong>
+                        {item.indicator ||
+                          "Unknown"}
+                      </strong>
 
-                    <p>
-                      Type:{" "}
-                      {item.type ||
-                        "Unknown"}
-                      <br />
+                      <p>
+                        Type:{" "}
+                        {item.type ||
+                          "Unknown"}
+                        <br />
 
-                      Status:{" "}
-                      {item.status ||
-                        "Unknown"}
-                      <br />
+                        Status:{" "}
+                        {item.status ||
+                          "Unknown"}
+                        <br />
 
-                      Source:{" "}
-                      {item.source ||
-                        "Threat Intelligence"}
-                      <br />
+                        Source:{" "}
+                        {item.source ||
+                          "Threat Intelligence"}
+                        <br />
 
-                      Confidence:{" "}
-                      {item.confidence ??
-                        0}
-                      %
-                    </p>
-                  </div>
-                ))}
+                        Confidence:{" "}
+                        {item.confidence ??
+                          0}
+                        %
+                      </p>
+                    </div>
+                  )
+                )}
               </div>
             )}
           </section>
@@ -1904,7 +2094,9 @@ function App() {
 
                     <div className="geo-details">
                       <div>
-                        <span>Country</span>
+                        <span>
+                          Country
+                        </span>
 
                         <strong>
                           {g.country ||
@@ -1913,7 +2105,9 @@ function App() {
                       </div>
 
                       <div>
-                        <span>Region</span>
+                        <span>
+                          Region
+                        </span>
 
                         <strong>
                           {g.region ||
@@ -1922,7 +2116,9 @@ function App() {
                       </div>
 
                       <div>
-                        <span>City</span>
+                        <span>
+                          City
+                        </span>
 
                         <strong>
                           {g.city ||
@@ -1945,10 +2141,13 @@ function App() {
                 ))}
               </div>
             ) : (
-              <p>
-                No public IP geolocation
-                available.
-              </p>
+              <div className="empty-state">
+                <p>
+                  No public IP geolocation
+                  available for this
+                  investigation.
+                </p>
+              </div>
             )}
           </section>
         )}
@@ -1977,15 +2176,19 @@ function App() {
                 Number(
                   geo.find(
                     (g) =>
-                      g.latitude != null &&
-                      g.longitude != null
+                      g.latitude !=
+                        null &&
+                      g.longitude !=
+                        null
                   ).latitude
                 ),
                 Number(
                   geo.find(
                     (g) =>
-                      g.latitude != null &&
-                      g.longitude != null
+                      g.latitude !=
+                        null &&
+                      g.longitude !=
+                        null
                   ).longitude
                 ),
               ]}
@@ -2041,20 +2244,23 @@ function App() {
               )}
             </MapContainer>
           ) : (
-            <p>
-              No mappable public IP
-              location.
-            </p>
+            <div className="empty-state">
+              <p>
+                No mappable public IP
+                location available.
+              </p>
+            </div>
           )}
         </section>
 
         <section className="panel">
           <div className="panel-header">
             <div>
-              <h3>Email Body</h3>
+              <h3>Extracted Content</h3>
 
               <p>
-                Extracted message content.
+                Extracted message or document
+                content.
               </p>
             </div>
           </div>
@@ -2123,10 +2329,14 @@ function App() {
           [
             "riskScoring",
             "Automatic Risk Scoring",
-            "Calculate email threat risk automatically.",
+            "Calculate file threat risk automatically.",
           ],
         ].map(
-          ([key, title, description]) => (
+          ([
+            key,
+            title,
+            description,
+          ]) => (
             <div
               key={key}
               style={{
@@ -2171,6 +2381,32 @@ function App() {
       </div>
 
       <div style={{ marginTop: 30 }}>
+        <h4>Supported Files</h4>
+
+        <div className="indicator-grid">
+          <div className="indicator-card">
+            <strong>
+              ✉ EML
+            </strong>
+
+            <span>
+              Email forensic analysis
+            </span>
+          </div>
+
+          <div className="indicator-card">
+            <strong>
+              📄 PDF
+            </strong>
+
+            <span>
+              Document content analysis
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 30 }}>
         <h4>System Status</h4>
 
         <div className="indicator-grid">
@@ -2212,10 +2448,12 @@ function App() {
         <h4>About SENTINEL</h4>
 
         <p>
-          SENTINEL is an Email Threat Intelligence
-          & Forensic Analysis Platform designed
-          to analyze suspicious email files and
-          provide investigation insights.
+          SENTINEL is an Email Threat
+          Intelligence & Forensic Analysis
+          Platform designed to analyze
+          suspicious email files and supported
+          documents and provide investigation
+          insights.
         </p>
 
         <p style={{ opacity: 0.7 }}>
@@ -2247,6 +2485,15 @@ function App() {
           <h4>
             Investigation Report Ready
           </h4>
+
+          <p>
+            File:{" "}
+            <strong>
+              {email.filename ||
+                file?.name ||
+                "Unknown"}
+            </strong>
+          </p>
 
           <p>
             Risk Level:{" "}
@@ -2283,15 +2530,15 @@ function App() {
           </h3>
 
           <p>
-            Analyze an email first to generate
-            a report.
+            Analyze an .eml or .pdf file first
+            to generate a report.
           </p>
 
           <button
             className="primary-button"
             onClick={uploadPage}
           >
-            Analyze Email
+            Analyze File
           </button>
         </div>
       )}
@@ -2300,10 +2547,8 @@ function App() {
 
   return (
     <div className="app">
-
       {/* SIDEBAR */}
       <aside className="sidebar">
-
         <div className="brand">
           <div className="brand-icon">
             S
@@ -2319,7 +2564,6 @@ function App() {
         </div>
 
         <nav className="navigation">
-
           <button
             className={`nav-item ${
               page === "Dashboard"
@@ -2341,7 +2585,7 @@ function App() {
             onClick={uploadPage}
           >
             <span>✉</span>
-            Analyze Email
+            Analyze File
           </button>
 
           <button
@@ -2405,11 +2649,9 @@ function App() {
             <span>⚙</span>
             Settings
           </button>
-
         </nav>
 
         <div className="sidebar-bottom">
-
           <div className="system-status">
             <span className="status-dot"></span>
 
@@ -2443,15 +2685,12 @@ function App() {
               ● Forensic Analyzer Ready
             </div>
           </div>
-
         </div>
       </aside>
 
       {/* MAIN */}
       <main className="main-content">
-
         <header className="topbar">
-
           <div>
             <h2>{page}</h2>
 
@@ -2462,7 +2701,6 @@ function App() {
           </div>
 
           <div className="analyst">
-
             <div className="analyst-avatar">
               A
             </div>
@@ -2476,12 +2714,10 @@ function App() {
                 Security Operations
               </span>
             </div>
-
           </div>
         </header>
 
         <div className="content">
-
           {page === "Dashboard" && (
             <Dashboard />
           )}
@@ -2509,9 +2745,7 @@ function App() {
           {page === "Settings" && (
             <Settings />
           )}
-
         </div>
-
       </main>
     </div>
   );
