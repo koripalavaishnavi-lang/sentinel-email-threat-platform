@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -38,6 +38,15 @@ function App() {
   const [error, setError] = useState("");
   const [page, setPage] = useState("Dashboard");
 
+  const [history, setHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem("sentinel_history");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const uploadRef = useRef(null);
 
   // Settings
@@ -52,6 +61,18 @@ function App() {
       ...s,
       [key]: !s[key],
     }));
+
+  // Save history
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        "sentinel_history",
+        JSON.stringify(history)
+      );
+    } catch (err) {
+      console.error("Unable to save history:", err);
+    }
+  }, [history]);
 
   // Select .eml file
   const handleFile = (e) => {
@@ -104,6 +125,49 @@ function App() {
       }
 
       setData(result);
+
+      // Add investigation to history
+      const historyItem = {
+        id: Date.now(),
+        analyzedAt: new Date().toISOString(),
+        filename:
+          result.email?.filename ||
+          file?.name ||
+          "Unknown Email",
+        sender:
+          result.email?.sender ||
+          "Unknown Sender",
+        recipient:
+          result.email?.recipient ||
+          "Unknown Recipient",
+        subject:
+          result.email?.subject ||
+          "No Subject",
+        riskScore: Number(result.risk?.score || 0),
+        riskLevel:
+          result.risk?.level ||
+          "LOW",
+        malicious:
+          Number(
+            result.threat_intelligence?.summary?.malicious || 0
+          ),
+        suspicious:
+          Number(
+            result.threat_intelligence?.summary?.suspicious || 0
+          ),
+        totalIndicators:
+          Number(
+            result.threat_intelligence?.summary?.total_indicators ||
+              0
+          ),
+        data: result,
+      };
+
+      setHistory((previous) => [
+        historyItem,
+        ...previous,
+      ]);
+
       setPage("Investigate");
 
       window.scrollTo({
@@ -112,6 +176,7 @@ function App() {
       });
     } catch (err) {
       console.error(err);
+
       setError(
         "Unable to connect to the backend. Please make sure the backend is running."
       );
@@ -136,7 +201,10 @@ function App() {
   // Navigation
   const dashboard = () => {
     setPage("Dashboard");
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
   };
 
   const uploadPage = () => {
@@ -156,7 +224,11 @@ function App() {
     }
 
     setPage("Investigate");
-    window.scrollTo({ top: 0, behavior: "smooth" });
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
   };
 
   const reports = () => {
@@ -166,10 +238,39 @@ function App() {
     }
 
     setPage("Reports");
-    window.scrollTo({ top: 0, behavior: "smooth" });
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
   };
 
-  // Data
+  const openHistoryItem = (item) => {
+    if (!item?.data) return;
+
+    setData(item.data);
+    setFile(null);
+    setError("");
+    setPage("Investigate");
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  };
+
+  const clearHistory = () => {
+    if (
+      window.confirm(
+        "Are you sure you want to clear all investigation history?"
+      )
+    ) {
+      setHistory([]);
+      localStorage.removeItem("sentinel_history");
+    }
+  };
+
+  // Current data
   const email = data?.email || {};
   const forensic = data?.forensics || {};
   const auth = data?.authentication || {};
@@ -229,10 +330,45 @@ function App() {
     }
   };
 
+  // Dashboard statistics
+  const totalEmails = history.length;
+
+  const totalThreats = history.reduce(
+    (total, item) =>
+      total + Number(item.malicious || 0),
+    0
+  );
+
+  const highRiskCount = history.filter((item) =>
+    ["HIGH", "CRITICAL"].includes(
+      String(item.riskLevel || "").toUpperCase()
+    )
+  ).length;
+
+  const totalInvestigations = history.length;
+
+  const lowRiskCount = history.filter(
+    (item) =>
+      String(item.riskLevel || "").toUpperCase() === "LOW"
+  ).length;
+
+  const mediumRiskCount = history.filter(
+    (item) =>
+      String(item.riskLevel || "").toUpperCase() === "MEDIUM"
+  ).length;
+
+  const criticalRiskCount = history.filter(
+    (item) =>
+      String(item.riskLevel || "").toUpperCase() ===
+      "CRITICAL"
+  ).length;
+
   // PDF report
   const generateReport = () => {
     if (!data) {
-      setError("Analyze an email before generating a report.");
+      setError(
+        "Analyze an email before generating a report."
+      );
       return;
     }
 
@@ -243,23 +379,31 @@ function App() {
     );
 
     if (!win) {
-      setError("Please allow pop-ups to generate the report.");
+      setError(
+        "Please allow pop-ups to generate the report."
+      );
       return;
     }
 
     const urlHtml =
       urls.length > 0
-        ? urls.map((x) => `<li>${esc(x)}</li>`).join("")
+        ? urls
+            .map((x) => `<li>${esc(x)}</li>`)
+            .join("")
         : "<li>None detected</li>";
 
     const domainHtml =
       domains.length > 0
-        ? domains.map((x) => `<li>${esc(x)}</li>`).join("")
+        ? domains
+            .map((x) => `<li>${esc(x)}</li>`)
+            .join("")
         : "<li>None detected</li>";
 
     const ipHtml =
       ips.length > 0
-        ? ips.map((x) => `<li>${esc(x)}</li>`).join("")
+        ? ips
+            .map((x) => `<li>${esc(x)}</li>`)
+            .join("")
         : "<li>None detected</li>";
 
     const headerHtml =
@@ -271,7 +415,9 @@ function App() {
 
     const reasonHtml =
       reasons.length > 0
-        ? reasons.map((x) => `<li>${esc(x)}</li>`).join("")
+        ? reasons
+            .map((x) => `<li>${esc(x)}</li>`)
+            .join("")
         : "<li>No suspicious indicators detected.</li>";
 
     const threatHtml =
@@ -280,18 +426,30 @@ function App() {
             .map(
               (x) => `
                 <tr>
-                  <td>${esc(x.indicator || "Unknown")}</td>
-                  <td>${esc(x.type || "Unknown")}</td>
-                  <td>${esc(x.status || "UNKNOWN")}</td>
-                  <td>${esc(x.source || "Unknown")}</td>
-                  <td>${esc(x.confidence ?? 0)}%</td>
+                  <td>${esc(
+                    x.indicator || "Unknown"
+                  )}</td>
+                  <td>${esc(
+                    x.type || "Unknown"
+                  )}</td>
+                  <td>${esc(
+                    x.status || "UNKNOWN"
+                  )}</td>
+                  <td>${esc(
+                    x.source || "Unknown"
+                  )}</td>
+                  <td>${esc(
+                    x.confidence ?? 0
+                  )}%</td>
                 </tr>
               `
             )
             .join("")
         : `
             <tr>
-              <td colspan="5">No threat intelligence indicators found.</td>
+              <td colspan="5">
+                No threat intelligence indicators found.
+              </td>
             </tr>
           `;
 
@@ -301,18 +459,30 @@ function App() {
             .map(
               (g) => `
                 <tr>
-                  <td>${esc(g.ip || "Unknown")}</td>
-                  <td>${esc(g.country || "Unknown")}</td>
-                  <td>${esc(g.region || "Unknown")}</td>
-                  <td>${esc(g.city || "Unknown")}</td>
-                  <td>${esc(g.organization || "Unknown")}</td>
+                  <td>${esc(
+                    g.ip || "Unknown"
+                  )}</td>
+                  <td>${esc(
+                    g.country || "Unknown"
+                  )}</td>
+                  <td>${esc(
+                    g.region || "Unknown"
+                  )}</td>
+                  <td>${esc(
+                    g.city || "Unknown"
+                  )}</td>
+                  <td>${esc(
+                    g.organization || "Unknown"
+                  )}</td>
                 </tr>
               `
             )
             .join("")
         : `
             <tr>
-              <td colspan="5">No public IP geolocation available.</td>
+              <td colspan="5">
+                No public IP geolocation available.
+              </td>
             </tr>
           `;
 
@@ -321,6 +491,7 @@ function App() {
       <html>
       <head>
         <title>SENTINEL Security Analysis Report</title>
+
         <style>
           body {
             font-family: Arial, sans-serif;
@@ -421,15 +592,23 @@ function App() {
         </div>
 
         <div class="sub">
-          Report generated: ${esc(
-            new Date().toLocaleString()
-          )}
+          Report generated:
+          ${esc(new Date().toLocaleString())}
         </div>
 
         <div class="risk">
-          <div class="label">Threat Assessment</div>
-          <div class="score">${esc(riskScore)} / 100</div>
-          <strong>Risk Level: ${esc(riskLevel)}</strong>
+          <div class="label">
+            Threat Assessment
+          </div>
+
+          <div class="score">
+            ${esc(riskScore)} / 100
+          </div>
+
+          <strong>
+            Risk Level:
+            ${esc(riskLevel)}
+          </strong>
         </div>
 
         <h2>Email Information</h2>
@@ -437,22 +616,35 @@ function App() {
         <div class="grid">
           <div class="item">
             <div class="label">Filename</div>
-            ${esc(email.filename || file?.name || "Unknown")}
+            ${esc(
+              email.filename ||
+                file?.name ||
+                "Unknown"
+            )}
           </div>
 
           <div class="item">
             <div class="label">Sender</div>
-            ${esc(email.sender || "Not available")}
+            ${esc(
+              email.sender ||
+                "Not available"
+            )}
           </div>
 
           <div class="item">
             <div class="label">Recipient</div>
-            ${esc(email.recipient || "Not available")}
+            ${esc(
+              email.recipient ||
+                "Not available"
+            )}
           </div>
 
           <div class="item">
             <div class="label">Reply-To</div>
-            ${esc(email.reply_to || "Not available")}
+            ${esc(
+              email.reply_to ||
+                "Not available"
+            )}
           </div>
 
           <div class="item">
@@ -462,7 +654,10 @@ function App() {
 
           <div class="item">
             <div class="label">Subject</div>
-            ${esc(email.subject || "Not available")}
+            ${esc(
+              email.subject ||
+                "Not available"
+            )}
           </div>
         </div>
 
@@ -506,16 +701,25 @@ function App() {
         <div class="grid">
           <div class="item">
             <div class="label">SPF</div>
-            ${esc(auth.spf || "Not Found")}
+            ${esc(
+              auth.spf ||
+                "Not Found"
+            )}
           </div>
 
           <div class="item">
             <div class="label">DKIM</div>
-            ${esc(auth.dkim || "Not Found")}
+            ${esc(
+              auth.dkim ||
+                "Not Found"
+            )}
           </div>
 
           <div class="item">
-            <div class="label">Authentication Results</div>
+            <div class="label">
+              Authentication Results
+            </div>
+
             ${esc(
               auth.authentication_results ||
                 "Not available"
@@ -583,6 +787,7 @@ function App() {
       <div className="panel-header">
         <div>
           <h3>Analyze Email</h3>
+
           <p>
             Upload an email file for forensic and
             threat intelligence analysis.
@@ -603,7 +808,9 @@ function App() {
         <div className="upload-icon">✉</div>
 
         <h3>
-          {file ? file.name : "Upload an email file"}
+          {file
+            ? file.name
+            : "Upload an email file"}
         </h3>
 
         <p>
@@ -628,7 +835,9 @@ function App() {
             onClick={analyze}
             disabled={loading}
           >
-            {loading ? "Analyzing..." : "Analyze Email"}
+            {loading
+              ? "Analyzing..."
+              : "Analyze Email"}
           </button>
         )}
       </div>
@@ -641,13 +850,399 @@ function App() {
     </section>
   );
 
-  // Results section
+  // Dashboard
+  const Dashboard = () => (
+    <div>
+      <section className="stats-grid">
+
+        <div className="stat-card">
+          <div className="stat-icon blue">
+            ✉
+          </div>
+
+          <div>
+            <span>Emails Analyzed</span>
+            <strong>{totalEmails}</strong>
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-icon red">
+            ⚠
+          </div>
+
+          <div>
+            <span>Threats Detected</span>
+            <strong>{totalThreats}</strong>
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-icon orange">
+            !
+          </div>
+
+          <div>
+            <span>High Risk</span>
+            <strong>{highRiskCount}</strong>
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-icon purple">
+            ⌕
+          </div>
+
+          <div>
+            <span>Investigations</span>
+            <strong>{totalInvestigations}</strong>
+          </div>
+        </div>
+
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>Security Operations Overview</h3>
+
+            <p>
+              Current investigation activity and
+              threat posture.
+            </p>
+          </div>
+
+          <button
+            className="primary-button"
+            onClick={uploadPage}
+          >
+            + Analyze Email
+          </button>
+        </div>
+
+        {history.length === 0 ? (
+          <div className="empty-state">
+            <h3>No Investigations Yet</h3>
+
+            <p>
+              Upload an .eml file to begin your
+              first SENTINEL investigation.
+            </p>
+
+            <button
+              className="primary-button"
+              onClick={uploadPage}
+            >
+              Analyze Email
+            </button>
+          </div>
+        ) : (
+          <>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(180px, 1fr))",
+                gap: 15,
+                marginTop: 20,
+              }}
+            >
+              <div className="indicator-card">
+                <span className="indicator-number">
+                  {lowRiskCount}
+                </span>
+
+                <strong>Low Risk</strong>
+              </div>
+
+              <div className="indicator-card">
+                <span className="indicator-number">
+                  {mediumRiskCount}
+                </span>
+
+                <strong>Medium Risk</strong>
+              </div>
+
+              <div className="indicator-card">
+                <span className="indicator-number">
+                  {highRiskCount}
+                </span>
+
+                <strong>High Risk</strong>
+              </div>
+
+              <div className="indicator-card">
+                <span className="indicator-number">
+                  {criticalRiskCount}
+                </span>
+
+                <strong>Critical</strong>
+              </div>
+            </div>
+          </>
+        )}
+      </section>
+
+      {history.length > 0 && (
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h3>Recent Investigations</h3>
+
+              <p>
+                Latest email security investigations.
+              </p>
+            </div>
+
+            <button
+              className="secondary-button"
+              onClick={() => setPage("History")}
+            >
+              View All
+            </button>
+          </div>
+
+          <div style={{ marginTop: 15 }}>
+            {history
+              .slice(0, 5)
+              .map((item) => (
+                <div
+                  key={item.id}
+                  style={{
+                    display: "flex",
+                    justifyContent:
+                      "space-between",
+                    alignItems: "center",
+                    gap: 15,
+                    padding: "15px 0",
+                    borderBottom:
+                      "1px solid #e5e7eb",
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <strong
+                      style={{
+                        display: "block",
+                        overflow: "hidden",
+                        textOverflow:
+                          "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {item.subject ||
+                        item.filename}
+                    </strong>
+
+                    <small>
+                      {item.sender}
+                    </small>
+
+                    <div
+                      style={{
+                        fontSize: 12,
+                        opacity: 0.65,
+                        marginTop: 4,
+                      }}
+                    >
+                      {formatDate(
+                        item.analyzedAt
+                      )}
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      textAlign: "right",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <div
+                      className={`risk-badge ${riskClass(
+                        item.riskLevel
+                      )}`}
+                    >
+                      {item.riskLevel}
+                    </div>
+
+                    <strong
+                      style={{
+                        display: "block",
+                        marginTop: 5,
+                      }}
+                    >
+                      {item.riskScore}/100
+                    </strong>
+                  </div>
+
+                  <button
+                    className="secondary-button"
+                    onClick={() =>
+                      openHistoryItem(item)
+                    }
+                  >
+                    Open
+                  </button>
+                </div>
+              ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+
+  // History page
+  const History = () => (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <h3>Investigation History</h3>
+
+          <p>
+            Review previously analyzed emails
+            stored in this browser.
+          </p>
+        </div>
+
+        {history.length > 0 && (
+          <button
+            className="secondary-button"
+            onClick={clearHistory}
+          >
+            Clear History
+          </button>
+        )}
+      </div>
+
+      {history.length === 0 ? (
+        <div className="empty-state">
+          <h3>No Investigation History</h3>
+
+          <p>
+            Completed email investigations will
+            appear here.
+          </p>
+
+          <button
+            className="primary-button"
+            onClick={uploadPage}
+          >
+            Analyze Email
+          </button>
+        </div>
+      ) : (
+        <div style={{ marginTop: 20 }}>
+          {history.map((item) => (
+            <div
+              key={item.id}
+              className="panel"
+              style={{
+                marginBottom: 15,
+                padding: 20,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent:
+                    "space-between",
+                  alignItems: "center",
+                  gap: 20,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div>
+                  <h4
+                    style={{
+                      margin: "0 0 6px",
+                    }}
+                  >
+                    {item.subject ||
+                      "No Subject"}
+                  </h4>
+
+                  <p
+                    style={{
+                      margin: "4px 0",
+                    }}
+                  >
+                    <strong>File:</strong>{" "}
+                    {item.filename}
+                  </p>
+
+                  <p
+                    style={{
+                      margin: "4px 0",
+                    }}
+                  >
+                    <strong>Sender:</strong>{" "}
+                    {item.sender}
+                  </p>
+
+                  <p
+                    style={{
+                      margin: "4px 0",
+                    }}
+                  >
+                    <strong>Analyzed:</strong>{" "}
+                    {formatDate(
+                      item.analyzedAt
+                    )}
+                  </p>
+                </div>
+
+                <div
+                  style={{
+                    textAlign: "center",
+                  }}
+                >
+                  <div
+                    className={`risk-badge ${riskClass(
+                      item.riskLevel
+                    )}`}
+                  >
+                    {item.riskLevel}
+                  </div>
+
+                  <div
+                    style={{
+                      fontSize: 24,
+                      fontWeight: 700,
+                      marginTop: 8,
+                    }}
+                  >
+                    {item.riskScore}/100
+                  </div>
+
+                  <small>
+                    {item.malicious || 0} malicious
+                    indicators
+                  </small>
+                </div>
+
+                <button
+                  className="primary-button"
+                  onClick={() =>
+                    openHistoryItem(item)
+                  }
+                >
+                  Open Investigation
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+
+  // Results
   const Results = () => {
     if (!data) {
       return (
         <section className="panel">
           <div className="empty-state">
             <h3>No Investigation Available</h3>
+
             <p>
               Upload and analyze an email to begin.
             </p>
@@ -674,8 +1269,10 @@ function App() {
           <div className="panel-header">
             <div>
               <h3>Email Information</h3>
+
               <p>
-                Basic metadata extracted from the email.
+                Basic metadata extracted from the
+                email.
               </p>
             </div>
           </div>
@@ -683,6 +1280,7 @@ function App() {
           <div className="info-grid">
             <div className="info-item">
               <span>Filename</span>
+
               <strong>
                 {email.filename ||
                   file?.name ||
@@ -692,27 +1290,34 @@ function App() {
 
             <div className="info-item">
               <span>Sender</span>
+
               <strong>
-                {email.sender || "Not available"}
+                {email.sender ||
+                  "Not available"}
               </strong>
             </div>
 
             <div className="info-item">
               <span>Recipient</span>
+
               <strong>
-                {email.recipient || "Not available"}
+                {email.recipient ||
+                  "Not available"}
               </strong>
             </div>
 
             <div className="info-item">
               <span>Reply-To</span>
+
               <strong>
-                {email.reply_to || "Not available"}
+                {email.reply_to ||
+                  "Not available"}
               </strong>
             </div>
 
             <div className="info-item">
               <span>Date</span>
+
               <strong>
                 {formatDate(email.date)}
               </strong>
@@ -720,8 +1325,10 @@ function App() {
 
             <div className="info-item">
               <span>Subject</span>
+
               <strong>
-                {email.subject || "Not available"}
+                {email.subject ||
+                  "Not available"}
               </strong>
             </div>
           </div>
@@ -731,6 +1338,7 @@ function App() {
           <div className="panel-header">
             <div>
               <h3>Threat Assessment</h3>
+
               <p>
                 Automated forensic risk assessment.
               </p>
@@ -755,7 +1363,9 @@ function App() {
                 {riskScore}
               </div>
 
-              <span>Threat Score / 100</span>
+              <span>
+                Threat Score / 100
+              </span>
             </div>
 
             <div className="risk-reasons">
@@ -768,7 +1378,9 @@ function App() {
                   ))}
                 </ul>
               ) : (
-                <p>No suspicious indicators detected.</p>
+                <p>
+                  No suspicious indicators detected.
+                </p>
               )}
             </div>
           </div>
@@ -777,9 +1389,211 @@ function App() {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <h3>Investigation Summary</h3>
+              <h3>Detailed Threat Analysis</h3>
+
               <p>
-                High-level findings from the investigation.
+                Consolidated threat intelligence
+                and forensic findings.
+              </p>
+            </div>
+          </div>
+
+          <div className="indicator-grid">
+            <div className="indicator-card">
+              <span className="indicator-number">
+                {summary.total_indicators ??
+                  indicators.length}
+              </span>
+
+              <strong>Total Indicators</strong>
+            </div>
+
+            <div className="indicator-card">
+              <span className="indicator-number">
+                {summary.malicious || 0}
+              </span>
+
+              <strong>Malicious</strong>
+            </div>
+
+            <div className="indicator-card">
+              <span className="indicator-number">
+                {summary.suspicious || 0}
+              </span>
+
+              <strong>Suspicious</strong>
+            </div>
+
+            <div className="indicator-card">
+              <span className="indicator-number">
+                {summary.clean || 0}
+              </span>
+
+              <strong>Clean</strong>
+            </div>
+          </div>
+
+          {indicators.length > 0 && (
+            <div style={{ marginTop: 20 }}>
+              {indicators.map((item, i) => {
+                const status =
+                  item.status || "UNKNOWN";
+
+                const statusClass =
+                  String(status).toLowerCase() ===
+                  "malicious"
+                    ? "risk-high"
+                    : String(status).toLowerCase() ===
+                      "suspicious"
+                    ? "risk-medium"
+                    : String(status).toLowerCase() ===
+                      "clean"
+                    ? "risk-low"
+                    : "";
+
+                return (
+                  <div
+                    className="panel"
+                    key={i}
+                    style={{
+                      marginBottom: 12,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent:
+                          "space-between",
+                        alignItems: "center",
+                        gap: 15,
+                      }}
+                    >
+                      <strong
+                        style={{
+                          wordBreak:
+                            "break-word",
+                        }}
+                      >
+                        {item.indicator ||
+                          "Unknown Indicator"}
+                      </strong>
+
+                      <span
+                        className={`risk-badge ${statusClass}`}
+                      >
+                        {status}
+                      </span>
+                    </div>
+
+                    <div
+                      className="info-grid"
+                      style={{
+                        marginTop: 15,
+                      }}
+                    >
+                      <div className="info-item">
+                        <span>Type</span>
+                        <strong>
+                          {item.type ||
+                            "Unknown"}
+                        </strong>
+                      </div>
+
+                      <div className="info-item">
+                        <span>Source</span>
+                        <strong>
+                          {item.source ||
+                            "Threat Intelligence"}
+                        </strong>
+                      </div>
+
+                      <div className="info-item">
+                        <span>Confidence</span>
+                        <strong>
+                          {item.confidence ??
+                            0}
+                          %
+                        </strong>
+                      </div>
+
+                      <div className="info-item">
+                        <span>Malicious</span>
+                        <strong>
+                          {item.malicious ??
+                            0}
+                        </strong>
+                      </div>
+
+                      <div className="info-item">
+                        <span>Suspicious</span>
+                        <strong>
+                          {item.suspicious ??
+                            0}
+                        </strong>
+                      </div>
+
+                      <div className="info-item">
+                        <span>Harmless</span>
+                        <strong>
+                          {item.harmless ??
+                            0}
+                        </strong>
+                      </div>
+
+                      <div className="info-item">
+                        <span>Undetected</span>
+                        <strong>
+                          {item.undetected ??
+                            0}
+                        </strong>
+                      </div>
+
+                      {item.abuse_confidence_score !==
+                        undefined && (
+                        <div className="info-item">
+                          <span>
+                            AbuseIPDB Confidence
+                          </span>
+
+                          <strong>
+                            {
+                              item.abuse_confidence_score
+                            }
+                            %
+                          </strong>
+                        </div>
+                      )}
+
+                      {item.total_reports !==
+                        undefined && (
+                        <div className="info-item">
+                          <span>
+                            Reports
+                          </span>
+
+                          <strong>
+                            {
+                              item.total_reports
+                            }
+                          </strong>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h3>Investigation Summary</h3>
+
+              <p>
+                High-level findings from the
+                investigation.
               </p>
             </div>
           </div>
@@ -789,6 +1603,7 @@ function App() {
               <span className="indicator-number">
                 {urls.length}
               </span>
+
               <strong>URLs</strong>
             </div>
 
@@ -796,6 +1611,7 @@ function App() {
               <span className="indicator-number">
                 {domains.length}
               </span>
+
               <strong>Domains</strong>
             </div>
 
@@ -803,6 +1619,7 @@ function App() {
               <span className="indicator-number">
                 {ips.length}
               </span>
+
               <strong>IP Addresses</strong>
             </div>
 
@@ -810,6 +1627,7 @@ function App() {
               <span className="indicator-number">
                 {indicators.length}
               </span>
+
               <strong>Threat Indicators</strong>
             </div>
           </div>
@@ -819,6 +1637,7 @@ function App() {
           <div className="panel-header">
             <div>
               <h3>Forensic Indicators</h3>
+
               <p>
                 Indicators extracted from the email.
               </p>
@@ -830,6 +1649,7 @@ function App() {
               <span className="indicator-number">
                 {urls.length}
               </span>
+
               <strong>URLs</strong>
             </div>
 
@@ -837,6 +1657,7 @@ function App() {
               <span className="indicator-number">
                 {domains.length}
               </span>
+
               <strong>Domains</strong>
             </div>
 
@@ -844,6 +1665,7 @@ function App() {
               <span className="indicator-number">
                 {ips.length}
               </span>
+
               <strong>IP Addresses</strong>
             </div>
 
@@ -851,6 +1673,7 @@ function App() {
               <span className="indicator-number">
                 {received.length}
               </span>
+
               <strong>Received Headers</strong>
             </div>
           </div>
@@ -858,9 +1681,13 @@ function App() {
           {urls.length > 0 && (
             <div className="indicator-section">
               <h4>Extracted URLs</h4>
+
               <div className="tag-list">
                 {urls.map((x, i) => (
-                  <span className="tag" key={i}>
+                  <span
+                    className="tag"
+                    key={i}
+                  >
                     {x}
                   </span>
                 ))}
@@ -871,9 +1698,13 @@ function App() {
           {domains.length > 0 && (
             <div className="indicator-section">
               <h4>Extracted Domains</h4>
+
               <div className="tag-list">
                 {domains.map((x, i) => (
-                  <span className="tag" key={i}>
+                  <span
+                    className="tag"
+                    key={i}
+                  >
                     {x}
                   </span>
                 ))}
@@ -884,9 +1715,13 @@ function App() {
           {ips.length > 0 && (
             <div className="indicator-section">
               <h4>IP Addresses</h4>
+
               <div className="tag-list">
                 {ips.map((x, i) => (
-                  <span className="tag ip-tag" key={i}>
+                  <span
+                    className="tag ip-tag"
+                    key={i}
+                  >
                     {x}
                   </span>
                 ))}
@@ -899,8 +1734,10 @@ function App() {
           <div className="panel-header">
             <div>
               <h3>Email Authentication</h3>
+
               <p>
-                SPF, DKIM and Authentication-Results.
+                SPF, DKIM and
+                Authentication-Results.
               </p>
             </div>
           </div>
@@ -908,6 +1745,7 @@ function App() {
           <div className="auth-grid">
             <div className="auth-card">
               <span>SPF</span>
+
               <strong>
                 {auth.spf || "Not Found"}
               </strong>
@@ -915,13 +1753,17 @@ function App() {
 
             <div className="auth-card">
               <span>DKIM</span>
+
               <strong>
                 {auth.dkim || "Not Found"}
               </strong>
             </div>
 
             <div className="auth-card">
-              <span>Authentication Results</span>
+              <span>
+                Authentication Results
+              </span>
+
               <strong>
                 {auth.authentication_results ||
                   "Not available"}
@@ -935,6 +1777,7 @@ function App() {
             <div className="panel-header">
               <div>
                 <h3>Threat Intelligence</h3>
+
                 <p>
                   External intelligence results.
                 </p>
@@ -947,6 +1790,7 @@ function App() {
                   {summary.total_indicators ??
                     indicators.length}
                 </span>
+
                 <strong>Total</strong>
               </div>
 
@@ -954,6 +1798,7 @@ function App() {
                 <span className="indicator-number">
                   {summary.malicious || 0}
                 </span>
+
                 <strong>Malicious</strong>
               </div>
 
@@ -961,6 +1806,7 @@ function App() {
                 <span className="indicator-number">
                   {summary.suspicious || 0}
                 </span>
+
                 <strong>Suspicious</strong>
               </div>
 
@@ -968,6 +1814,7 @@ function App() {
                 <span className="indicator-number">
                   {summary.clean || 0}
                 </span>
+
                 <strong>Clean</strong>
               </div>
             </div>
@@ -978,22 +1825,35 @@ function App() {
                   <div
                     className="panel"
                     key={i}
-                    style={{ marginBottom: 12 }}
+                    style={{
+                      marginBottom: 12,
+                    }}
                   >
                     <strong>
-                      {item.indicator || "Unknown"}
+                      {item.indicator ||
+                        "Unknown"}
                     </strong>
 
                     <p>
-                      Type: {item.type || "Unknown"}
+                      Type:{" "}
+                      {item.type ||
+                        "Unknown"}
                       <br />
-                      Status: {item.status || "Unknown"}
+
+                      Status:{" "}
+                      {item.status ||
+                        "Unknown"}
                       <br />
+
                       Source:{" "}
-                      {item.source || "Threat Intelligence"}
+                      {item.source ||
+                        "Threat Intelligence"}
                       <br />
+
                       Confidence:{" "}
-                      {item.confidence ?? 0}%
+                      {item.confidence ??
+                        0}
+                      %
                     </p>
                   </div>
                 ))}
@@ -1006,9 +1866,13 @@ function App() {
           <section className="panel">
             <div className="panel-header">
               <div>
-                <h3>🌍 IP Geolocation</h3>
+                <h3>
+                  🌍 IP Geolocation
+                </h3>
+
                 <p>
-                  Geographic intelligence from public IPs.
+                  Geographic intelligence from
+                  public IPs.
                 </p>
               </div>
             </div>
@@ -1016,14 +1880,24 @@ function App() {
             {geo.length > 0 ? (
               <div className="geo-grid">
                 {geo.map((g, i) => (
-                  <div className="geo-card" key={i}>
+                  <div
+                    className="geo-card"
+                    key={i}
+                  >
                     <div className="geo-card-header">
-                      <div className="geo-globe">🌐</div>
+                      <div className="geo-globe">
+                        🌐
+                      </div>
 
                       <div>
-                        <h4>{g.ip || "Unknown IP"}</h4>
+                        <h4>
+                          {g.ip ||
+                            "Unknown IP"}
+                        </h4>
+
                         <span>
-                          {g.country || "Unknown"}
+                          {g.country ||
+                            "Unknown"}
                         </span>
                       </div>
                     </div>
@@ -1031,29 +1905,39 @@ function App() {
                     <div className="geo-details">
                       <div>
                         <span>Country</span>
+
                         <strong>
-                          {g.country || "Unknown"}
+                          {g.country ||
+                            "Unknown"}
                         </strong>
                       </div>
 
                       <div>
                         <span>Region</span>
+
                         <strong>
-                          {g.region || "Unknown"}
+                          {g.region ||
+                            "Unknown"}
                         </strong>
                       </div>
 
                       <div>
                         <span>City</span>
+
                         <strong>
-                          {g.city || "Unknown"}
+                          {g.city ||
+                            "Unknown"}
                         </strong>
                       </div>
 
                       <div>
-                        <span>Organization</span>
+                        <span>
+                          Organization
+                        </span>
+
                         <strong>
-                          {g.organization || "Unknown"}
+                          {g.organization ||
+                            "Unknown"}
                         </strong>
                       </div>
                     </div>
@@ -1061,7 +1945,10 @@ function App() {
                 ))}
               </div>
             ) : (
-              <p>No public IP geolocation available.</p>
+              <p>
+                No public IP geolocation
+                available.
+              </p>
             )}
           </section>
         )}
@@ -1069,9 +1956,13 @@ function App() {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <h3>🗺️ IP Geolocation Map</h3>
+              <h3>
+                🗺️ IP Geolocation Map
+              </h3>
+
               <p>
-                Visual representation of detected public IPs.
+                Visual representation of
+                detected public IPs.
               </p>
             </div>
           </div>
@@ -1122,23 +2013,38 @@ function App() {
                   >
                     <Popup>
                       <strong>
-                        IP: {g.ip || "Unknown"}
+                        IP:{" "}
+                        {g.ip ||
+                          "Unknown"}
                       </strong>
+
                       <br />
+
                       Country:{" "}
-                      {g.country || "Unknown"}
+                      {g.country ||
+                        "Unknown"}
+
                       <br />
-                      City: {g.city || "Unknown"}
+
+                      City:{" "}
+                      {g.city ||
+                        "Unknown"}
+
                       <br />
+
                       Organization:{" "}
-                      {g.organization || "Unknown"}
+                      {g.organization ||
+                        "Unknown"}
                     </Popup>
                   </Marker>
                 ) : null
               )}
             </MapContainer>
           ) : (
-            <p>No mappable public IP location.</p>
+            <p>
+              No mappable public IP
+              location.
+            </p>
           )}
         </section>
 
@@ -1146,7 +2052,10 @@ function App() {
           <div className="panel-header">
             <div>
               <h3>Email Body</h3>
-              <p>Extracted message content.</p>
+
+              <p>
+                Extracted message content.
+              </p>
             </div>
           </div>
 
@@ -1180,14 +2089,19 @@ function App() {
     );
   };
 
-  // Settings page
+  // Settings
   const Settings = () => (
-    <section className="panel" style={{ padding: 28 }}>
+    <section
+      className="panel"
+      style={{ padding: 28 }}
+    >
       <div className="panel-header">
         <div>
           <h3>Settings</h3>
+
           <p>
-            Configure SENTINEL analysis preferences.
+            Configure SENTINEL analysis
+            preferences.
           </p>
         </div>
       </div>
@@ -1211,34 +2125,49 @@ function App() {
             "Automatic Risk Scoring",
             "Calculate email threat risk automatically.",
           ],
-        ].map(([key, title, description]) => (
-          <div
-            key={key}
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              padding: "18px",
-              marginTop: "12px",
-              border: "1px solid #dbe1ea",
-              borderRadius: "10px",
-            }}
-          >
-            <div>
-              <strong>{title}</strong>
-              <p style={{ margin: "5px 0 0", opacity: 0.7 }}>
-                {description}
-              </p>
-            </div>
-
-            <button
-              className="secondary-button"
-              onClick={() => toggle(key)}
+        ].map(
+          ([key, title, description]) => (
+            <div
+              key={key}
+              style={{
+                display: "flex",
+                justifyContent:
+                  "space-between",
+                alignItems: "center",
+                padding: "18px",
+                marginTop: "12px",
+                border:
+                  "1px solid #dbe1ea",
+                borderRadius: "10px",
+              }}
             >
-              {settings[key] ? "ON" : "OFF"}
-            </button>
-          </div>
-        ))}
+              <div>
+                <strong>{title}</strong>
+
+                <p
+                  style={{
+                    margin:
+                      "5px 0 0",
+                    opacity: 0.7,
+                  }}
+                >
+                  {description}
+                </p>
+              </div>
+
+              <button
+                className="secondary-button"
+                onClick={() =>
+                  toggle(key)
+                }
+              >
+                {settings[key]
+                  ? "ON"
+                  : "OFF"}
+              </button>
+            </div>
+          )
+        )}
       </div>
 
       <div style={{ marginTop: 30 }}>
@@ -1246,22 +2175,34 @@ function App() {
 
         <div className="indicator-grid">
           <div className="indicator-card">
-            <strong>● Backend</strong>
+            <strong>
+              ● Backend
+            </strong>
+
             <span>Connected</span>
           </div>
 
           <div className="indicator-card">
-            <strong>● Forensic Engine</strong>
+            <strong>
+              ● Forensic Engine
+            </strong>
+
             <span>Ready</span>
           </div>
 
           <div className="indicator-card">
-            <strong>● Threat Intelligence</strong>
+            <strong>
+              ● Threat Intelligence
+            </strong>
+
             <span>Ready</span>
           </div>
 
           <div className="indicator-card">
-            <strong>● Geolocation</strong>
+            <strong>
+              ● Geolocation
+            </strong>
+
             <span>Ready</span>
           </div>
         </div>
@@ -1271,49 +2212,61 @@ function App() {
         <h4>About SENTINEL</h4>
 
         <p>
-          SENTINEL is an Email Threat Intelligence &
-          Forensic Analysis Platform designed to analyze
-          suspicious email files and provide investigation
-          insights.
+          SENTINEL is an Email Threat Intelligence
+          & Forensic Analysis Platform designed
+          to analyze suspicious email files and
+          provide investigation insights.
         </p>
 
         <p style={{ opacity: 0.7 }}>
-          Version 1.0 • Security Operations Platform
+          Version 1.0 • Security Operations
+          Platform
         </p>
       </div>
     </section>
   );
 
-  // Reports page
+  // Reports
   const Reports = () => (
     <section className="panel">
       <div className="panel-header">
         <div>
-          <h3>📄 Security Report</h3>
+          <h3>
+            📄 Security Report
+          </h3>
+
           <p>
-            Generate a professional report for the
-            current investigation.
+            Generate a professional report for
+            the current investigation.
           </p>
         </div>
       </div>
 
       {data ? (
         <div style={{ padding: 20 }}>
-          <h4>Investigation Report Ready</h4>
+          <h4>
+            Investigation Report Ready
+          </h4>
 
           <p>
             Risk Level:{" "}
-            <strong>{riskLevel}</strong>
+            <strong>
+              {riskLevel}
+            </strong>
           </p>
 
           <p>
             Risk Score:{" "}
-            <strong>{riskScore} / 100</strong>
+            <strong>
+              {riskScore} / 100
+            </strong>
           </p>
 
           <p>
             Threat Indicators:{" "}
-            <strong>{indicators.length}</strong>
+            <strong>
+              {indicators.length}
+            </strong>
           </p>
 
           <button
@@ -1325,9 +2278,13 @@ function App() {
         </div>
       ) : (
         <div className="empty-state">
-          <h3>No Report Available</h3>
+          <h3>
+            No Report Available
+          </h3>
+
           <p>
-            Analyze an email first to generate a report.
+            Analyze an email first to generate
+            a report.
           </p>
 
           <button
@@ -1341,7 +2298,6 @@ function App() {
     </section>
   );
 
-  // Main render
   return (
     <div className="app">
 
@@ -1349,11 +2305,16 @@ function App() {
       <aside className="sidebar">
 
         <div className="brand">
-          <div className="brand-icon">S</div>
+          <div className="brand-icon">
+            S
+          </div>
 
           <div>
             <h1>SENTINEL</h1>
-            <span>Threat Intelligence</span>
+
+            <span>
+              Threat Intelligence
+            </span>
           </div>
         </div>
 
@@ -1361,7 +2322,9 @@ function App() {
 
           <button
             className={`nav-item ${
-              page === "Dashboard" ? "active" : ""
+              page === "Dashboard"
+                ? "active"
+                : ""
             }`}
             onClick={dashboard}
           >
@@ -1407,12 +2370,32 @@ function App() {
 
           <button
             className={`nav-item ${
+              page === "History"
+                ? "active"
+                : ""
+            }`}
+            onClick={() => {
+              setPage("History");
+
+              window.scrollTo({
+                top: 0,
+                behavior: "smooth",
+              });
+            }}
+          >
+            <span>◷</span>
+            History
+          </button>
+
+          <button
+            className={`nav-item ${
               page === "Settings"
                 ? "active"
                 : ""
             }`}
             onClick={() => {
               setPage("Settings");
+
               window.scrollTo({
                 top: 0,
                 behavior: "smooth",
@@ -1431,8 +2414,13 @@ function App() {
             <span className="status-dot"></span>
 
             <div>
-              <strong>System Online</strong>
-              <small>All services operational</small>
+              <strong>
+                System Online
+              </strong>
+
+              <small>
+                All services operational
+              </small>
             </div>
           </div>
 
@@ -1443,13 +2431,20 @@ function App() {
               lineHeight: 1.7,
             }}
           >
-            <div>● SENTINEL Engine Ready</div>
-            <div>● Threat Intelligence Ready</div>
-            <div>● Forensic Analyzer Ready</div>
+            <div>
+              ● SENTINEL Engine Ready
+            </div>
+
+            <div>
+              ● Threat Intelligence Ready
+            </div>
+
+            <div>
+              ● Forensic Analyzer Ready
+            </div>
           </div>
 
         </div>
-
       </aside>
 
       {/* MAIN */}
@@ -1461,7 +2456,8 @@ function App() {
             <h2>{page}</h2>
 
             <p>
-              Email threat intelligence & forensic analysis
+              Email threat intelligence &
+              forensic analysis
             </p>
           </div>
 
@@ -1472,95 +2468,51 @@ function App() {
             </div>
 
             <div>
-              <strong>Analyst</strong>
-              <span>Security Operations</span>
+              <strong>
+                Analyst
+              </strong>
+
+              <span>
+                Security Operations
+              </span>
             </div>
 
           </div>
-
         </header>
 
         <div className="content">
 
-          {page === "Settings" && <Settings />}
+          {page === "Dashboard" && (
+            <Dashboard />
+          )}
 
-          {page === "Reports" && <Reports />}
-
-          {page === "Investigate" && <Results />}
-
-          {(page === "Dashboard" ||
-            page === "Analyze Email") && (
+          {page === "Analyze Email" && (
             <>
-              <section className="stats-grid">
-
-                <div className="stat-card">
-                  <div className="stat-icon blue">
-                    ✉
-                  </div>
-
-                  <div>
-                    <span>Emails Analyzed</span>
-                    <strong>
-                      {data ? 1 : 0}
-                    </strong>
-                  </div>
-                </div>
-
-                <div className="stat-card">
-                  <div className="stat-icon red">
-                    ⚠
-                  </div>
-
-                  <div>
-                    <span>Threats Detected</span>
-                    <strong>
-                      {summary.malicious || 0}
-                    </strong>
-                  </div>
-                </div>
-
-                <div className="stat-card">
-                  <div className="stat-icon orange">
-                    !
-                  </div>
-
-                  <div>
-                    <span>High Risk</span>
-                    <strong>
-                      {["HIGH", "CRITICAL"].includes(
-                        String(riskLevel).toUpperCase()
-                      )
-                        ? 1
-                        : 0}
-                    </strong>
-                  </div>
-                </div>
-
-                <div className="stat-card">
-                  <div className="stat-icon purple">
-                    ⌕
-                  </div>
-
-                  <div>
-                    <span>Investigations</span>
-                    <strong>
-                      {data ? 1 : 0}
-                    </strong>
-                  </div>
-                </div>
-
-              </section>
-
               <UploadSection />
 
               {data && <Results />}
             </>
           )}
 
+          {page === "Investigate" && (
+            <Results />
+          )}
+
+          {page === "Reports" && (
+            <Reports />
+          )}
+
+          {page === "History" && (
+            <History />
+          )}
+
+          {page === "Settings" && (
+            <Settings />
+          )}
+
         </div>
 
       </main>
-
     </div>
   );
 }
