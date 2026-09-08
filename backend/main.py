@@ -20,6 +20,7 @@ load_dotenv()
 
 VT_KEY = os.getenv("VIRUSTOTAL_API_KEY", "").strip()
 ABUSE_KEY = os.getenv("ABUSEIPDB_API_KEY", "").strip()
+
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
 
@@ -39,10 +40,16 @@ if VT_KEY.lower() in ("", "your_virustotal_key"):
 if ABUSE_KEY.lower() in ("", "your_abuseipdb_key"):
     ABUSE_KEY = ""
 
-GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+GMAIL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly"
+]
 
 gmail_credentials = None
 oauth_states = set()
+
+# =========================
+# APP
+# =========================
 
 app = FastAPI(
     title="SENTINEL Email Threat Intelligence API",
@@ -58,12 +65,25 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://127.0.0.1:5174",
         "https://sentinel-email-threat-platform-1.onrender.com",
-        "https://sentinelthreat.in",
+        "https://sentinelthreat.in"
     ],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
+
+# =========================
+# GOOGLE DEBUG
+# =========================
+
+@app.get("/api/debug/google")
+def debug_google():
+    return {
+        "client_id_configured": bool(GOOGLE_CLIENT_ID),
+        "client_secret_configured": bool(GOOGLE_CLIENT_SECRET),
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "frontend_url": FRONTEND_URL
+    }
 
 # =========================
 # BASIC ROUTES
@@ -91,33 +111,57 @@ def health():
 def extract_urls(text):
     if not text:
         return []
-    found = re.findall(r'https?://[^\s<>"\']+', text)
+
+    found = re.findall(
+        r'https?://[^\s<>"\']+',
+        text
+    )
+
     return list(dict.fromkeys(
-        u.rstrip(".,;:!?)]}") for u in found
+        u.rstrip(".,;:!?)]}")
+        for u in found
     ))
 
 def extract_domains(urls):
     result = []
+
     for url in urls:
         try:
-            domain = urlparse(url).netloc.split("@")[-1].split(":")[0].lower()
+            domain = (
+                urlparse(url)
+                .netloc
+                .split("@")[-1]
+                .split(":")[0]
+                .lower()
+            )
+
             if domain and domain not in result:
                 result.append(domain)
+
         except Exception:
             pass
+
     return result
 
 def extract_ip_addresses(text):
     if not text:
         return []
+
     result = []
-    for ip in re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', text):
+
+    for ip in re.findall(
+        r'\b(?:\d{1,3}\.){3}\d{1,3}\b',
+        text
+    ):
         try:
             ipaddress.ip_address(ip)
+
             if ip not in result:
                 result.append(ip)
+
         except ValueError:
             pass
+
     return result
 
 def is_public_ip(ip):
@@ -134,6 +178,7 @@ def get_email_body(message):
             return ""
 
     body = ""
+
     for part in message.walk():
         if (
             part.get_content_type() == "text/plain"
@@ -145,6 +190,7 @@ def get_email_body(message):
                 body += part.get_content()
             except Exception:
                 pass
+
     return body
 
 def get_received_headers(message):
@@ -153,7 +199,11 @@ def get_received_headers(message):
 def analyze_authentication(message):
     return {
         "spf": message.get("Received-SPF") or "Not Found",
-        "dkim": "Found" if message.get("DKIM-Signature") else "Not Found",
+        "dkim": (
+            "Found"
+            if message.get("DKIM-Signature")
+            else "Not Found"
+        ),
         "authentication_results": (
             message.get("Authentication-Results")
             or "Not available"
@@ -167,40 +217,71 @@ def analyze_authentication(message):
 def extract_pdf_text(data):
     try:
         reader = PdfReader(io.BytesIO(data))
+
         text = "\n".join(
-            page.extract_text() or "" for page in reader.pages
+            page.extract_text() or ""
+            for page in reader.pages
         ).strip()
+
         return text
+
     except Exception as e:
-        raise ValueError(f"Unable to read PDF: {e}")
+        raise ValueError(
+            f"Unable to read PDF: {e}"
+        )
 
 def extract_pdf_email_fields(text):
+
     def field(patterns, default):
         for p in patterns:
-            m = re.search(p, text, re.I | re.M)
+            m = re.search(
+                p,
+                text,
+                re.I | re.M
+            )
+
             if m and m.group(1).strip():
                 return m.group(1).strip()
+
         return default
 
     return {
         "sender": field(
-            [r"^\s*From\s*:\s*(.+)$", r"^\s*Sender\s*:\s*(.+)$"],
+            [
+                r"^\s*From\s*:\s*(.+)$",
+                r"^\s*Sender\s*:\s*(.+)$"
+            ],
             "Unknown"
         ),
+
         "recipient": field(
-            [r"^\s*To\s*:\s*(.+)$", r"^\s*Recipient\s*:\s*(.+)$"],
+            [
+                r"^\s*To\s*:\s*(.+)$",
+                r"^\s*Recipient\s*:\s*(.+)$"
+            ],
             "Unknown"
         ),
+
         "reply_to": field(
-            [r"^\s*Reply-To\s*:\s*(.+)$", r"^\s*Reply To\s*:\s*(.+)$"],
+            [
+                r"^\s*Reply-To\s*:\s*(.+)$",
+                r"^\s*Reply To\s*:\s*(.+)$"
+            ],
             "Not specified"
         ),
+
         "subject": field(
-            [r"^\s*Subject\s*:\s*(.+)$"],
+            [
+                r"^\s*Subject\s*:\s*(.+)$"
+            ],
             "No Subject"
         ),
+
         "date": field(
-            [r"^\s*Date\s*:\s*(.+)$", r"^\s*Sent\s*:\s*(.+)$"],
+            [
+                r"^\s*Date\s*:\s*(.+)$",
+                r"^\s*Sent\s*:\s*(.+)$"
+            ],
             "Unknown"
         )
     }
@@ -212,14 +293,18 @@ def extract_pdf_email_fields(text):
 def get_ip_geolocation(ip):
     if not is_public_ip(ip):
         return None
+
     try:
         r = requests.get(
             f"https://ipapi.co/{ip}/json/",
             timeout=5
         )
+
         if r.status_code != 200:
             return None
+
         d = r.json()
+
         return {
             "ip": ip,
             "country": d.get("country_name"),
@@ -233,8 +318,11 @@ def get_ip_geolocation(ip):
             "asn": d.get("asn"),
             "organization": d.get("org")
         }
+
     except Exception as e:
-        print(f"Geolocation error for {ip}: {e}")
+        print(
+            f"Geolocation error for {ip}: {e}"
+        )
         return None
 
 # =========================
@@ -250,24 +338,41 @@ def vt_headers():
 def vt_status(stats):
     if not stats:
         return "UNKNOWN"
+
     if stats.get("malicious", 0) > 0:
         return "MALICIOUS"
+
     if stats.get("suspicious", 0) > 0:
         return "SUSPICIOUS"
+
     return "CLEAN"
 
 def vt_confidence(stats):
     if not stats:
         return 0
+
     total = sum(
         stats.get(k, 0)
-        for k in ("malicious", "suspicious", "harmless", "undetected")
+        for k in (
+            "malicious",
+            "suspicious",
+            "harmless",
+            "undetected"
+        )
     )
+
     return round(
-        ((stats.get("malicious", 0) + stats.get("suspicious", 0)) / total) * 100
+        (
+            (
+                stats.get("malicious", 0)
+                + stats.get("suspicious", 0)
+            )
+            / total
+        ) * 100
     ) if total else 0
 
 def check_vt(indicator, kind, endpoint):
+
     result = {
         "indicator": indicator,
         "type": kind,
@@ -281,7 +386,9 @@ def check_vt(indicator, kind, endpoint):
     }
 
     if not VT_KEY:
-        result["source"] = "VirusTotal API key not configured"
+        result["source"] = (
+            "VirusTotal API key not configured"
+        )
         return result
 
     try:
@@ -292,7 +399,9 @@ def check_vt(indicator, kind, endpoint):
         )
 
         if r.status_code != 200:
-            result["source"] = f"VirusTotal HTTP {r.status_code}"
+            result["source"] = (
+                f"VirusTotal HTTP {r.status_code}"
+            )
             return result
 
         stats = (
@@ -302,16 +411,28 @@ def check_vt(indicator, kind, endpoint):
             .get("last_analysis_stats", {})
         )
 
-        for k in ("malicious", "suspicious", "harmless", "undetected"):
+        for k in (
+            "malicious",
+            "suspicious",
+            "harmless",
+            "undetected"
+        ):
             result[k] = stats.get(k, 0)
 
         result["status"] = vt_status(stats)
         result["confidence"] = vt_confidence(stats)
+
         return result
 
     except Exception as e:
-        print(f"VirusTotal error: {e}")
-        result["source"] = "VirusTotal request failed"
+        print(
+            f"VirusTotal error: {e}"
+        )
+
+        result["source"] = (
+            "VirusTotal request failed"
+        )
+
         return result
 
 def check_virustotal_ip(ip):
@@ -329,6 +450,7 @@ def check_virustotal_domain(domain):
     )
 
 def check_virustotal_url(url):
+
     url_id = base64.urlsafe_b64encode(
         url.encode()
     ).decode().rstrip("=")
@@ -344,6 +466,7 @@ def check_virustotal_url(url):
 # =========================
 
 def check_abuseipdb(ip):
+
     result = {
         "indicator": ip,
         "type": "IP",
@@ -358,11 +481,15 @@ def check_abuseipdb(ip):
     }
 
     if not ABUSE_KEY:
-        result["source"] = "AbuseIPDB API key not configured"
+        result["source"] = (
+            "AbuseIPDB API key not configured"
+        )
         return result
 
     if not is_public_ip(ip):
-        result["source"] = "Private/non-public IP"
+        result["source"] = (
+            "Private/non-public IP"
+        )
         return result
 
     try:
@@ -380,30 +507,49 @@ def check_abuseipdb(ip):
         )
 
         if r.status_code != 200:
-            result["source"] = f"AbuseIPDB HTTP {r.status_code}"
+            result["source"] = (
+                f"AbuseIPDB HTTP {r.status_code}"
+            )
             return result
 
         d = r.json().get("data", {})
-        score = d.get("abuseConfidenceScore", 0)
+        score = d.get(
+            "abuseConfidenceScore",
+            0
+        )
 
         result.update({
             "abuse_confidence_score": score,
             "confidence": score,
-            "total_reports": d.get("totalReports", 0),
-            "country_code": d.get("countryCode"),
+            "total_reports": d.get(
+                "totalReports",
+                0
+            ),
+            "country_code": d.get(
+                "countryCode"
+            ),
             "isp": d.get("isp"),
             "domain": d.get("domain"),
             "status": (
-                "MALICIOUS" if score >= 70
-                else "SUSPICIOUS" if score >= 25
+                "MALICIOUS"
+                if score >= 70
+                else "SUSPICIOUS"
+                if score >= 25
                 else "CLEAN"
             )
         })
+
         return result
 
     except Exception as e:
-        print(f"AbuseIPDB error: {e}")
-        result["source"] = "AbuseIPDB request failed"
+        print(
+            f"AbuseIPDB error: {e}"
+        )
+
+        result["source"] = (
+            "AbuseIPDB request failed"
+        )
+
         return result
 
 # =========================
@@ -411,6 +557,7 @@ def check_abuseipdb(ip):
 # =========================
 
 def local_ip_intelligence(ip):
+
     data = {
         "8.8.8.8": {
             "status": "CLEAN",
@@ -429,10 +576,20 @@ def local_ip_intelligence(ip):
     }
 
 def local_domain_intelligence(domain):
+
     data = {
-        "example.com": ("CLEAN", 90),
-        "google.com": ("CLEAN", 90),
-        "microsoft.com": ("CLEAN", 90)
+        "example.com": (
+            "CLEAN",
+            90
+        ),
+        "google.com": (
+            "CLEAN",
+            90
+        ),
+        "microsoft.com": (
+            "CLEAN",
+            90
+        )
     }.get(domain.lower())
 
     if not data:
@@ -449,9 +606,14 @@ def local_domain_intelligence(domain):
     }
 
 def check_ip_threat_intelligence(ip):
+
     vt = check_virustotal_ip(ip)
     abuse = check_abuseipdb(ip)
-    statuses = [vt["status"], abuse["status"]]
+
+    statuses = [
+        vt["status"],
+        abuse["status"]
+    ]
 
     local = local_ip_intelligence(ip)
 
@@ -459,18 +621,31 @@ def check_ip_threat_intelligence(ip):
         overall = local["status"]
         confidence = local["confidence"]
         source = local["source"]
+
     elif "MALICIOUS" in statuses:
         overall = "MALICIOUS"
-        confidence = max(vt["confidence"], abuse["confidence"])
+        confidence = max(
+            vt["confidence"],
+            abuse["confidence"]
+        )
         source = "Combined Threat Intelligence"
+
     elif "SUSPICIOUS" in statuses:
         overall = "SUSPICIOUS"
-        confidence = max(vt["confidence"], abuse["confidence"])
+        confidence = max(
+            vt["confidence"],
+            abuse["confidence"]
+        )
         source = "Combined Threat Intelligence"
+
     elif "CLEAN" in statuses:
         overall = "CLEAN"
-        confidence = max(vt["confidence"], abuse["confidence"])
+        confidence = max(
+            vt["confidence"],
+            abuse["confidence"]
+        )
         source = "Combined Threat Intelligence"
+
     else:
         overall = "UNKNOWN"
         confidence = 0
@@ -489,12 +664,14 @@ def check_ip_threat_intelligence(ip):
     }
 
 def check_domain_threat_intelligence(domain):
+
     vt = check_virustotal_domain(domain)
 
     if vt["status"] != "UNKNOWN":
         return vt
 
     local = local_domain_intelligence(domain)
+
     return local or vt
 
 def check_url_threat_intelligence(url):
@@ -513,44 +690,86 @@ def calculate_risk(
     authentication,
     threat_intelligence
 ):
+
     score = 0
     reasons = []
-    text = f"{subject or ''} {body or ''}".lower()
+
+    text = (
+        f"{subject or ''} "
+        f"{body or ''}"
+    ).lower()
 
     if authentication["spf"] == "Not Found":
         score += 10
-        reasons.append("SPF authentication not found")
+        reasons.append(
+            "SPF authentication not found"
+        )
 
     if authentication["dkim"] == "Not Found":
         score += 10
-        reasons.append("DKIM signature not found")
+        reasons.append(
+            "DKIM signature not found"
+        )
 
     if urls:
-        score += min(len(urls) * 5, 20)
-        reasons.append(f"{len(urls)} URL(s) found")
+        score += min(
+            len(urls) * 5,
+            20
+        )
+        reasons.append(
+            f"{len(urls)} URL(s) found"
+        )
 
-    public_ips = [ip for ip in ip_addresses if is_public_ip(ip)]
+    public_ips = [
+        ip
+        for ip in ip_addresses
+        if is_public_ip(ip)
+    ]
 
     if public_ips:
-        score += min(len(public_ips) * 5, 15)
+        score += min(
+            len(public_ips) * 5,
+            15
+        )
         reasons.append(
             f"{len(public_ips)} public IP address(es) found"
         )
 
     keywords = [
-        "urgent", "verify your account", "verify account",
-        "password", "login", "click here", "security alert",
-        "account suspended", "account locked",
-        "confirm your account", "bank", "payment required",
-        "reset password", "limited time", "winner",
-        "congratulations", "invoice", "wire transfer"
+        "urgent",
+        "verify your account",
+        "verify account",
+        "password",
+        "login",
+        "click here",
+        "security alert",
+        "account suspended",
+        "account locked",
+        "confirm your account",
+        "bank",
+        "payment required",
+        "reset password",
+        "limited time",
+        "winner",
+        "congratulations",
+        "invoice",
+        "wire transfer"
     ]
 
-    found = [k for k in keywords if k in text]
+    found = [
+        k
+        for k in keywords
+        if k in text
+    ]
 
     if found:
-        score += min(len(found) * 5, 25)
-        reasons.append("Suspicious/phishing keywords detected")
+        score += min(
+            len(found) * 5,
+            25
+        )
+        reasons.append(
+            "Suspicious/phishing keywords detected"
+        )
 
     indicators = (
         threat_intelligence.get("ips", [])
@@ -571,16 +790,22 @@ def calculate_risk(
     ]
 
     if malicious:
-        score += min(len(malicious) * 30, 70)
+        score += min(
+            len(malicious) * 30,
+            70
+        )
         reasons.append(
-            f"Threat intelligence identified "
+            "Threat intelligence identified "
             f"{len(malicious)} malicious indicator(s)"
         )
 
     if suspicious:
-        score += min(len(suspicious) * 15, 40)
+        score += min(
+            len(suspicious) * 15,
+            40
+        )
         reasons.append(
-            f"Threat intelligence identified "
+            "Threat intelligence identified "
             f"{len(suspicious)} suspicious indicator(s)"
         )
 
@@ -589,8 +814,10 @@ def calculate_risk(
     return {
         "score": score,
         "level": (
-            "HIGH" if score >= 70
-            else "MEDIUM" if score >= 40
+            "HIGH"
+            if score >= 70
+            else "MEDIUM"
+            if score >= 40
             else "LOW"
         ),
         "reasons": reasons
@@ -600,17 +827,26 @@ def calculate_risk(
 # CORE EMAIL ANALYSIS
 # =========================
 
-async def analyze_bytes(file_bytes, filename):
+async def analyze_bytes(
+    file_bytes,
+    filename
+):
+
     if not file_bytes:
         return {
             "success": False,
             "error": "Uploaded file is empty"
         }
 
-    extension = os.path.splitext(filename)[1].lower()
+    extension = os.path.splitext(
+        filename
+    )[1].lower()
 
     if extension == ".pdf":
-        body = extract_pdf_text(file_bytes)
+
+        body = extract_pdf_text(
+            file_bytes
+        )
 
         if not body:
             return {
@@ -621,13 +857,16 @@ async def analyze_bytes(file_bytes, filename):
                 )
             }
 
-        fields = extract_pdf_email_fields(body)
+        fields = extract_pdf_email_fields(
+            body
+        )
 
         sender = fields["sender"]
         recipient = fields["recipient"]
         reply_to = fields["reply_to"]
         subject = fields["subject"]
         date = fields["date"]
+
         formatted_date = date
         header_text = body
 
@@ -644,27 +883,66 @@ async def analyze_bytes(file_bytes, filename):
         source_type = "PDF"
 
     elif extension == ".eml":
+
         message = BytesParser(
             policy=policy.default
         ).parsebytes(file_bytes)
 
-        sender = message.get("From", "Unknown")
-        recipient = message.get("To", "Unknown")
-        reply_to = message.get("Reply-To", "Not specified")
-        subject = message.get("Subject", "No Subject")
-        date = message.get("Date", "Unknown")
+        sender = message.get(
+            "From",
+            "Unknown"
+        )
+
+        recipient = message.get(
+            "To",
+            "Unknown"
+        )
+
+        reply_to = message.get(
+            "Reply-To",
+            "Not specified"
+        )
+
+        subject = message.get(
+            "Subject",
+            "No Subject"
+        )
+
+        date = message.get(
+            "Date",
+            "Unknown"
+        )
 
         try:
-            formatted_date = parsedate_to_datetime(
-                date
-            ).strftime("%Y-%m-%d %H:%M:%S %z")
+            formatted_date = (
+                parsedate_to_datetime(
+                    date
+                ).strftime(
+                    "%Y-%m-%d %H:%M:%S %z"
+                )
+            )
+
         except Exception:
             formatted_date = date
 
-        body = get_email_body(message)
+        body = get_email_body(
+            message
+        )
+
         header_text = str(message)
-        authentication = analyze_authentication(message)
-        received_headers = get_received_headers(message)
+
+        authentication = (
+            analyze_authentication(
+                message
+            )
+        )
+
+        received_headers = (
+            get_received_headers(
+                message
+            )
+        )
+
         source_type = "EML"
 
     else:
@@ -677,21 +955,30 @@ async def analyze_bytes(file_bytes, filename):
         }
 
     urls = list(dict.fromkeys(
-        extract_urls(body) + extract_urls(header_text)
+        extract_urls(body)
+        + extract_urls(header_text)
     ))
 
-    domains = extract_domains(urls)
+    domains = extract_domains(
+        urls
+    )
 
     ip_addresses = list(dict.fromkeys(
-        extract_ip_addresses(header_text)
-        + extract_ip_addresses(body)
+        extract_ip_addresses(
+            header_text
+        )
+        + extract_ip_addresses(
+            body
+        )
     ))
 
     geolocation = [
         location
         for ip in ip_addresses
         if is_public_ip(ip)
-        for location in [get_ip_geolocation(ip)]
+        for location in [
+            get_ip_geolocation(ip)
+        ]
         if location
     ]
 
@@ -702,12 +989,16 @@ async def analyze_bytes(file_bytes, filename):
     ]
 
     domain_intelligence = [
-        check_domain_threat_intelligence(domain)
+        check_domain_threat_intelligence(
+            domain
+        )
         for domain in domains
     ]
 
     url_intelligence = [
-        check_url_threat_intelligence(url)
+        check_url_threat_intelligence(
+            url
+        )
         for url in urls
     ]
 
@@ -722,17 +1013,24 @@ async def analyze_bytes(file_bytes, filename):
             x.get("status") == "MALICIOUS"
             for x in all_intelligence
         ),
+
         "suspicious": sum(
             x.get("status") == "SUSPICIOUS"
             for x in all_intelligence
         ),
+
         "clean": sum(
             x.get("status") == "CLEAN"
             for x in all_intelligence
         ),
+
         "unknown": sum(
-            x.get("status") not in
-            ("MALICIOUS", "SUSPICIOUS", "CLEAN")
+            x.get("status")
+            not in (
+                "MALICIOUS",
+                "SUSPICIOUS",
+                "CLEAN"
+            )
             for x in all_intelligence
         )
     }
@@ -742,7 +1040,9 @@ async def analyze_bytes(file_bytes, filename):
         "domains": domain_intelligence,
         "urls": url_intelligence,
         "summary": {
-            "total_indicators": len(all_intelligence),
+            "total_indicators": len(
+                all_intelligence
+            ),
             **counts
         }
     }
@@ -760,6 +1060,7 @@ async def analyze_bytes(file_bytes, filename):
     return {
         "success": True,
         "source_type": source_type,
+
         "email": {
             "filename": filename,
             "sender": sender,
@@ -768,12 +1069,14 @@ async def analyze_bytes(file_bytes, filename):
             "date": formatted_date,
             "subject": subject
         },
+
         "forensics": {
             "urls": urls,
             "domains": domains,
             "ip_addresses": ip_addresses,
             "received_headers": received_headers
         },
+
         "authentication": authentication,
         "geolocation": geolocation,
         "threat_intelligence": threat_intelligence,
@@ -786,15 +1089,24 @@ async def analyze_bytes(file_bytes, filename):
 # =========================
 
 @app.post("/api/analyze-email")
-async def analyze_email(file: UploadFile = File(...)):
+async def analyze_email(
+    file: UploadFile = File(...)
+):
+
     try:
         data = await file.read()
+
         return await analyze_bytes(
             data,
             file.filename or "unknown"
         )
+
     except Exception as e:
-        print("EMAIL ANALYSIS ERROR:", e)
+        print(
+            "EMAIL ANALYSIS ERROR:",
+            e
+        )
+
         return {
             "success": False,
             "error": str(e)
@@ -805,19 +1117,30 @@ async def analyze_email(file: UploadFile = File(...)):
 # =========================
 
 def google_flow():
-    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+
+    if (
+        not GOOGLE_CLIENT_ID
+        or not GOOGLE_CLIENT_SECRET
+    ):
         raise RuntimeError(
             "Google OAuth is not configured. "
-            "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Render."
+            "Set GOOGLE_CLIENT_ID and "
+            "GOOGLE_CLIENT_SECRET in Render."
         )
 
     config = {
         "web": {
             "client_id": GOOGLE_CLIENT_ID,
             "client_secret": GOOGLE_CLIENT_SECRET,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [GOOGLE_REDIRECT_URI]
+            "auth_uri": (
+                "https://accounts.google.com/o/oauth2/auth"
+            ),
+            "token_uri": (
+                "https://oauth2.googleapis.com/token"
+            ),
+            "redirect_uris": [
+                GOOGLE_REDIRECT_URI
+            ]
         }
     }
 
@@ -829,9 +1152,14 @@ def google_flow():
 
 @app.get("/api/auth/google")
 def google_login():
+
     try:
         flow = google_flow()
-        state = secrets.token_urlsafe(32)
+
+        state = secrets.token_urlsafe(
+            32
+        )
+
         oauth_states.add(state)
 
         url, _ = flow.authorization_url(
@@ -854,10 +1182,15 @@ def google_callback(
     code: str = "",
     state: str = ""
 ):
+
     global gmail_credentials
 
     try:
-        if not code or state not in oauth_states:
+
+        if (
+            not code
+            or state not in oauth_states
+        ):
             return RedirectResponse(
                 f"{FRONTEND_URL}?gmail=error"
             )
@@ -865,30 +1198,46 @@ def google_callback(
         oauth_states.discard(state)
 
         flow = google_flow()
-        flow.fetch_token(code=code)
-        gmail_credentials = flow.credentials
+
+        flow.fetch_token(
+            code=code
+        )
+
+        gmail_credentials = (
+            flow.credentials
+        )
 
         return RedirectResponse(
             f"{FRONTEND_URL}?gmail=connected"
         )
 
     except Exception as e:
-        print("Google OAuth error:", e)
+
+        print(
+            "Google OAuth error:",
+            e
+        )
+
         return RedirectResponse(
             f"{FRONTEND_URL}?gmail=error"
         )
 
 def gmail_service():
+
     global gmail_credentials
 
     if not gmail_credentials:
-        raise RuntimeError("Gmail is not connected.")
+        raise RuntimeError(
+            "Gmail is not connected."
+        )
 
     if (
         gmail_credentials.expired
         and gmail_credentials.refresh_token
     ):
-        gmail_credentials.refresh(Request())
+        gmail_credentials.refresh(
+            Request()
+        )
 
     return build(
         "gmail",
@@ -899,6 +1248,7 @@ def gmail_service():
 
 @app.get("/api/gmail/status")
 def gmail_status():
+
     global gmail_credentials
 
     if not gmail_credentials:
@@ -908,26 +1258,40 @@ def gmail_status():
         }
 
     try:
+
         service = gmail_service()
 
-        profile = service.users().getProfile(
-            userId="me"
-        ).execute()
+        profile = (
+            service.users()
+            .getProfile(
+                userId="me"
+            )
+            .execute()
+        )
 
         return {
             "success": True,
             "connected": True,
-            "email": profile.get("emailAddress"),
+            "email": profile.get(
+                "emailAddress"
+            ),
             "messages_total": profile.get(
-                "messagesTotal", 0
+                "messagesTotal",
+                0
             ),
             "threads_total": profile.get(
-                "threadsTotal", 0
+                "threadsTotal",
+                0
             )
         }
 
     except Exception as e:
-        print("Gmail status error:", e)
+
+        print(
+            "Gmail status error:",
+            e
+        )
+
         gmail_credentials = None
 
         return {
@@ -937,7 +1301,9 @@ def gmail_status():
 
 @app.post("/api/gmail/disconnect")
 def gmail_disconnect():
+
     global gmail_credentials
+
     gmail_credentials = None
 
     return {
@@ -954,8 +1320,14 @@ def gmail_messages(
     max_results: int = 20,
     page_token: str = None
 ):
+
     try:
-        max_results = max(1, min(max_results, 100))
+
+        max_results = max(
+            1,
+            min(max_results, 100)
+        )
+
         service = gmail_service()
 
         args = {
@@ -966,40 +1338,66 @@ def gmail_messages(
         if page_token:
             args["pageToken"] = page_token
 
-        data = service.users().messages().list(
-            **args
-        ).execute()
+        data = (
+            service.users()
+            .messages()
+            .list(**args)
+            .execute()
+        )
 
         messages = []
 
-        for item in data.get("messages", []):
-            message_id = item.get("id")
+        for item in data.get(
+            "messages",
+            []
+        ):
 
-            message = service.users().messages().get(
-                userId="me",
-                id=message_id,
-                format="metadata",
-                metadataHeaders=[
-                    "From",
-                    "To",
-                    "Subject",
-                    "Date",
-                    "Reply-To"
-                ]
-            ).execute()
+            message_id = item.get(
+                "id"
+            )
+
+            message = (
+                service.users()
+                .messages()
+                .get(
+                    userId="me",
+                    id=message_id,
+                    format="metadata",
+                    metadataHeaders=[
+                        "From",
+                        "To",
+                        "Subject",
+                        "Date",
+                        "Reply-To"
+                    ]
+                )
+                .execute()
+            )
 
             headers = {
                 h["name"].lower(): h["value"]
                 for h in message.get(
-                    "payload", {}
-                ).get("headers", [])
+                    "payload",
+                    {}
+                ).get(
+                    "headers",
+                    []
+                )
             }
 
             messages.append({
                 "id": message_id,
-                "thread_id": message.get("threadId"),
-                "sender": headers.get("from", "Unknown"),
-                "recipient": headers.get("to", "Unknown"),
+                "thread_id": message.get(
+                    "threadId"
+                ),
+                "sender": headers.get(
+                    "from",
+                    "Unknown"
+                ),
+                "recipient": headers.get(
+                    "to",
+                    "Unknown"
+                ),
                 "reply_to": headers.get(
                     "reply-to",
                     "Not specified"
@@ -1031,7 +1429,11 @@ def gmail_messages(
         }
 
     except Exception as e:
-        print("Gmail messages error:", e)
+
+        print(
+            "Gmail messages error:",
+            e
+        )
 
         return {
             "success": False,
@@ -1043,31 +1445,50 @@ def gmail_messages(
 # =========================
 
 def decode_gmail_raw(raw):
-    padding = "=" * ((-len(raw)) % 4)
+
+    padding = "=" * (
+        (-len(raw)) % 4
+    )
+
     return base64.urlsafe_b64decode(
         raw + padding
     )
 
 @app.get("/api/gmail/analyze/{message_id}")
-async def analyze_gmail(message_id: str):
+async def analyze_gmail(
+    message_id: str
+):
+
     try:
+
         service = gmail_service()
 
-        message = service.users().messages().get(
-            userId="me",
-            id=message_id,
-            format="raw"
-        ).execute()
+        message = (
+            service.users()
+            .messages()
+            .get(
+                userId="me",
+                id=message_id,
+                format="raw"
+            )
+            .execute()
+        )
 
-        raw = message.get("raw")
+        raw = message.get(
+            "raw"
+        )
 
         if not raw:
             return {
                 "success": False,
-                "error": "Gmail returned an empty email."
+                "error": (
+                    "Gmail returned an empty email."
+                )
             }
 
-        email_bytes = decode_gmail_raw(raw)
+        email_bytes = decode_gmail_raw(
+            raw
+        )
 
         result = await analyze_bytes(
             email_bytes,
@@ -1075,16 +1496,27 @@ async def analyze_gmail(message_id: str):
         )
 
         if result.get("success"):
+
             result["source_type"] = "GMAIL"
-            result["email"]["gmail_message_id"] = message_id
-            result["email"]["gmail_thread_id"] = (
-                message.get("threadId")
+
+            result["email"][
+                "gmail_message_id"
+            ] = message_id
+
+            result["email"][
+                "gmail_thread_id"
+            ] = message.get(
+                "threadId"
             )
 
         return result
 
     except Exception as e:
-        print("Gmail analysis error:", e)
+
+        print(
+            "Gmail analysis error:",
+            e
+        )
 
         return {
             "success": False,
@@ -1096,9 +1528,16 @@ async def analyze_gmail(message_id: str):
 # =========================
 
 if __name__ == "__main__":
+
     import uvicorn
+
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=int(os.getenv("PORT", "8000"))
+        port=int(
+            os.getenv(
+                "PORT",
+                "8000"
+            )
+        )
     )
