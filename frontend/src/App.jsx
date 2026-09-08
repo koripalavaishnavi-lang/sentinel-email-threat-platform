@@ -105,7 +105,7 @@ function App() {
 
     try {
       const response = await fetch(
-        "https://sentinel-email-threat-backend.onrender.com/api/analyze-email",
+        "https://sentinel-email-threat-platform-1.onrender.com/api/analyze-email",
         {
           method: "POST",
           body: form,
