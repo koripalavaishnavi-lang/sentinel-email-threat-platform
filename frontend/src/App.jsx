@@ -1,24 +1,37 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  MapContainer,
-  TileLayer,
-  Marker,
-  Popup,
-} from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import "./App.css";
 
-// --------------------------------------------------
+// ==================================================
 // SENTINEL BACKEND
-// --------------------------------------------------
+// ==================================================
+
+const BACKEND_URL =
+  "https://sentinel-email-threat-backend.onrender.com";
 
 const API_URL =
-  "https://sentinel-email-threat-backend.onrender.com/api/analyze-email";
+  `${BACKEND_URL}/api/analyze-email`;
 
-// --------------------------------------------------
+const GMAIL_STATUS_URL =
+  `${BACKEND_URL}/api/gmail/status`;
+
+const GMAIL_MESSAGES_URL =
+  `${BACKEND_URL}/api/gmail/messages`;
+
+const GMAIL_DISCONNECT_URL =
+  `${BACKEND_URL}/api/gmail/disconnect`;
+
+const GMAIL_AUTH_URL =
+  `${BACKEND_URL}/api/auth/google`;
+
+const GMAIL_ANALYZE_URL =
+  `${BACKEND_URL}/api/gmail/analyze`;
+
+// ==================================================
 // LEAFLET MARKER FIX
-// --------------------------------------------------
+// ==================================================
 
 delete L.Icon.Default.prototype._getIconUrl;
 
@@ -31,9 +44,9 @@ L.Icon.Default.mergeOptions({
     "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
 });
 
-// --------------------------------------------------
+// ==================================================
 // HELPERS
-// --------------------------------------------------
+// ==================================================
 
 const arr = (value) =>
   Array.isArray(value) ? value : [];
@@ -46,9 +59,9 @@ const esc = (value) =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 
-// --------------------------------------------------
+// ==================================================
 // APP
-// --------------------------------------------------
+// ==================================================
 
 function App() {
   const [file, setFile] = useState(null);
@@ -57,15 +70,14 @@ function App() {
   const [error, setError] = useState("");
   const [page, setPage] = useState("Dashboard");
 
-  // ------------------------------------------------
+  // =================================================
   // HISTORY
-  // ------------------------------------------------
+  // =================================================
 
   const [history, setHistory] = useState(() => {
     try {
-      const saved = localStorage.getItem(
-        "sentinel_history"
-      );
+      const saved =
+        localStorage.getItem("sentinel_history");
 
       return saved ? JSON.parse(saved) : [];
     } catch {
@@ -75,9 +87,9 @@ function App() {
 
   const uploadRef = useRef(null);
 
-  // ------------------------------------------------
+  // =================================================
   // SETTINGS
-  // ------------------------------------------------
+  // =================================================
 
   const [settings, setSettings] = useState({
     threatIntel: true,
@@ -92,9 +104,34 @@ function App() {
     }));
   };
 
-  // ------------------------------------------------
+  // =================================================
+  // GMAIL STATE
+  // =================================================
+
+  const [gmailConnected, setGmailConnected] =
+    useState(false);
+
+  const [gmailEmail, setGmailEmail] =
+    useState("");
+
+  const [gmailMessages, setGmailMessages] =
+    useState([]);
+
+  const [gmailLoading, setGmailLoading] =
+    useState(false);
+
+  const [gmailError, setGmailError] =
+    useState("");
+
+  const [gmailPageToken, setGmailPageToken] =
+    useState(null);
+
+  const [gmailAnalyzingId, setGmailAnalyzingId] =
+    useState("");
+
+  // =================================================
   // SAVE HISTORY
-  // ------------------------------------------------
+  // =================================================
 
   useEffect(() => {
     try {
@@ -110,10 +147,334 @@ function App() {
     }
   }, [history]);
 
-  // ------------------------------------------------
+  // =================================================
+  // GMAIL STATUS
+  // =================================================
+
+  const checkGmailStatus = async () => {
+    try {
+      const response = await fetch(
+        GMAIL_STATUS_URL
+      );
+
+      const result = await response.json();
+
+      if (result?.connected) {
+        setGmailConnected(true);
+        setGmailEmail(
+          result.email || ""
+        );
+      } else {
+        setGmailConnected(false);
+        setGmailEmail("");
+      }
+    } catch (err) {
+      console.error(
+        "Gmail status error:",
+        err
+      );
+
+      setGmailConnected(false);
+    }
+  };
+
+  useEffect(() => {
+    checkGmailStatus();
+
+    const params =
+      new URLSearchParams(
+        window.location.search
+      );
+
+    const gmailResult =
+      params.get("gmail");
+
+    if (gmailResult === "connected") {
+      setPage("Gmail");
+      setGmailError("");
+      checkGmailStatus();
+
+      window.history.replaceState(
+        {},
+        document.title,
+        window.location.pathname
+      );
+    }
+
+    if (gmailResult === "error") {
+      setPage("Gmail");
+      setGmailError(
+        "Google Gmail authorization failed. Please try connecting again."
+      );
+
+      window.history.replaceState(
+        {},
+        document.title,
+        window.location.pathname
+      );
+    }
+  }, []);
+
+  // =================================================
+  // CONNECT GMAIL
+  // =================================================
+
+  const connectGmail = () => {
+    setGmailError("");
+    window.location.href =
+      GMAIL_AUTH_URL;
+  };
+
+  // =================================================
+  // DISCONNECT GMAIL
+  // =================================================
+
+  const disconnectGmail = async () => {
+    try {
+      setGmailLoading(true);
+      setGmailError("");
+
+      const response = await fetch(
+        GMAIL_DISCONNECT_URL,
+        {
+          method: "POST",
+        }
+      );
+
+      const result =
+        await response.json();
+
+      if (!result?.success) {
+        throw new Error(
+          result?.error ||
+            "Unable to disconnect Gmail."
+        );
+      }
+
+      setGmailConnected(false);
+      setGmailEmail("");
+      setGmailMessages([]);
+      setGmailPageToken(null);
+    } catch (err) {
+      setGmailError(
+        err?.message ||
+          "Unable to disconnect Gmail."
+      );
+    } finally {
+      setGmailLoading(false);
+    }
+  };
+
+  // =================================================
+  // LOAD GMAIL MESSAGES
+  // =================================================
+
+  const loadGmailMessages = async (
+    pageToken = null
+  ) => {
+    try {
+      setGmailLoading(true);
+      setGmailError("");
+
+      let url =
+        `${GMAIL_MESSAGES_URL}?max_results=20`;
+
+      if (pageToken) {
+        url +=
+          `&page_token=${encodeURIComponent(
+            pageToken
+          )}`;
+      }
+
+      const response =
+        await fetch(url);
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result?.error ||
+            `Gmail returned ${response.status}.`
+        );
+      }
+
+      if (!result?.success) {
+        throw new Error(
+          result?.error ||
+            "Unable to load Gmail messages."
+        );
+      }
+
+      if (pageToken) {
+        setGmailMessages(
+          (previous) => [
+            ...previous,
+            ...(result.messages || []),
+          ]
+        );
+      } else {
+        setGmailMessages(
+          result.messages || []
+        );
+      }
+
+      setGmailPageToken(
+        result.next_page_token || null
+      );
+    } catch (err) {
+      console.error(
+        "Gmail messages error:",
+        err
+      );
+
+      setGmailError(
+        err?.message ||
+          "Unable to load Gmail messages."
+      );
+    } finally {
+      setGmailLoading(false);
+    }
+  };
+
+  // =================================================
+  // ANALYZE GMAIL MESSAGE
+  // =================================================
+
+  const analyzeGmailMessage = async (
+    message
+  ) => {
+    if (!message?.id) {
+      return;
+    }
+
+    try {
+      setGmailAnalyzingId(
+        message.id
+      );
+      setGmailError("");
+      setError("");
+
+      const response =
+        await fetch(
+          `${GMAIL_ANALYZE_URL}/${encodeURIComponent(
+            message.id
+          )}`
+        );
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result?.error ||
+            result?.message ||
+            `Gmail analysis returned ${response.status}.`
+        );
+      }
+
+      if (!result?.success) {
+        throw new Error(
+          result?.error ||
+            result?.message ||
+            "Gmail email analysis failed."
+        );
+      }
+
+      setData(result);
+      setFile(null);
+
+      // Add Gmail investigation to history.
+      const historyItem = {
+        id: Date.now(),
+
+        analyzedAt:
+          new Date().toISOString(),
+
+        filename:
+          result.email?.filename ||
+          `gmail_${message.id}.eml`,
+
+        sender:
+          result.email?.sender ||
+          message.sender ||
+          "Unknown Sender",
+
+        recipient:
+          result.email?.recipient ||
+          message.recipient ||
+          "Unknown Recipient",
+
+        subject:
+          result.email?.subject ||
+          message.subject ||
+          "No Subject",
+
+        riskScore:
+          Number(
+            result.risk?.score || 0
+          ),
+
+        riskLevel:
+          result.risk?.level ||
+          "LOW",
+
+        malicious:
+          Number(
+            result
+              .threat_intelligence
+              ?.summary
+              ?.malicious || 0
+          ),
+
+        suspicious:
+          Number(
+            result
+              .threat_intelligence
+              ?.summary
+              ?.suspicious || 0
+          ),
+
+        totalIndicators:
+          Number(
+            result
+              .threat_intelligence
+              ?.summary
+              ?.total_indicators || 0
+          ),
+
+        data: result,
+      };
+
+      setHistory((previous) => [
+        historyItem,
+        ...previous,
+      ]);
+
+      setPage("Investigate");
+
+      window.scrollTo({
+        top: 0,
+        behavior: "smooth",
+      });
+    } catch (err) {
+      console.error(
+        "Gmail analysis error:",
+        err
+      );
+
+      setGmailError(
+        err?.message ||
+          "Unable to analyze Gmail message."
+      );
+    } finally {
+      setGmailAnalyzingId("");
+    }
+  };
+
+  // =================================================
   // FILE SELECTION
-  // Supports .eml + .pdf
-  // ------------------------------------------------
+  // =================================================
 
   const handleFile = (event) => {
     const selected =
@@ -146,9 +507,9 @@ function App() {
     setData(null);
   };
 
-  // ------------------------------------------------
+  // =================================================
   // ANALYZE EMAIL
-  // ------------------------------------------------
+  // =================================================
 
   const analyze = async () => {
     if (!file) {
@@ -161,22 +522,24 @@ function App() {
     setLoading(true);
     setError("");
 
-    const form = new FormData();
+    const form =
+      new FormData();
 
-    // IMPORTANT:
-    // Backend expects the field name "file"
-    form.append("file", file);
+    form.append(
+      "file",
+      file
+    );
 
     try {
-      const response = await fetch(
-        API_URL,
-        {
-          method: "POST",
-          body: form,
-        }
-      );
+      const response =
+        await fetch(
+          API_URL,
+          {
+            method: "POST",
+            body: form,
+          }
+        );
 
-      // Try to read response safely
       const rawText =
         await response.text();
 
@@ -203,16 +566,12 @@ function App() {
       if (!result?.success) {
         throw new Error(
           result?.message ||
+            result?.error ||
             "Email analysis failed."
         );
       }
 
-      // Store analysis result
       setData(result);
-
-      // ------------------------------------------------
-      // HISTORY ITEM
-      // ------------------------------------------------
 
       const historyItem = {
         id: Date.now(),
@@ -238,7 +597,9 @@ function App() {
           "No Subject",
 
         riskScore:
-          Number(result.risk?.score || 0),
+          Number(
+            result.risk?.score || 0
+          ),
 
         riskLevel:
           result.risk?.level ||
@@ -297,9 +658,9 @@ function App() {
     }
   };
 
-  // ------------------------------------------------
+  // =================================================
   // RESET
-  // ------------------------------------------------
+  // =================================================
 
   const reset = () => {
     setFile(null);
@@ -313,9 +674,9 @@ function App() {
     });
   };
 
-  // ------------------------------------------------
+  // =================================================
   // NAVIGATION
-  // ------------------------------------------------
+  // =================================================
 
   const dashboard = () => {
     setPage("Dashboard");
@@ -364,7 +725,9 @@ function App() {
     });
   };
 
-  const openHistoryItem = (item) => {
+  const openHistoryItem = (
+    item
+  ) => {
     if (!item?.data) {
       return;
     }
@@ -393,17 +756,22 @@ function App() {
     }
   };
 
-  // ------------------------------------------------
+  // =================================================
   // CURRENT DATA
-  // ------------------------------------------------
+  // =================================================
 
-  const email = data?.email || {};
+  const email =
+    data?.email || {};
+
   const forensic =
     data?.forensics || {};
+
   const auth =
     data?.authentication || {};
+
   const ti =
     data?.threat_intelligence || {};
+
   const risk =
     data?.risk || {};
 
@@ -454,11 +822,13 @@ function App() {
     email.body ||
     "No email body available.";
 
-  // ------------------------------------------------
+  // =================================================
   // RISK CLASSES
-  // ------------------------------------------------
+  // =================================================
 
-  const riskClass = (level) => {
+  const riskClass = (
+    level
+  ) => {
     const value =
       String(level).toLowerCase();
 
@@ -483,7 +853,9 @@ function App() {
     return "risk-low";
   };
 
-  const scoreClass = (score) => {
+  const scoreClass = (
+    score
+  ) => {
     if (score >= 75) {
       return "score-high";
     }
@@ -495,11 +867,13 @@ function App() {
     return "score-low";
   };
 
-  // ------------------------------------------------
+  // =================================================
   // DATE FORMAT
-  // ------------------------------------------------
+  // =================================================
 
-  const formatDate = (value) => {
+  const formatDate = (
+    value
+  ) => {
     if (!value) {
       return "Not available";
     }
@@ -513,9 +887,9 @@ function App() {
     }
   };
 
-  // ------------------------------------------------
+  // =================================================
   // DASHBOARD STATS
-  // ------------------------------------------------
+  // =================================================
 
   const totalEmails =
     history.length;
@@ -556,7 +930,8 @@ function App() {
       (item) =>
         String(
           item.riskLevel || ""
-        ).toUpperCase() === "MEDIUM"
+        ).toUpperCase() ===
+        "MEDIUM"
     ).length;
 
   const criticalRiskCount =
@@ -568,9 +943,9 @@ function App() {
         "CRITICAL"
     ).length;
 
-  // ------------------------------------------------
+  // =================================================
   // SECURITY REPORT
-  // ------------------------------------------------
+  // =================================================
 
   const generateReport = () => {
     if (!data) {
@@ -654,25 +1029,20 @@ function App() {
                     item.indicator ||
                       "Unknown"
                   )}</td>
-
                   <td>${esc(
                     item.type ||
                       "Unknown"
                   )}</td>
-
                   <td>${esc(
                     item.status ||
                       "UNKNOWN"
                   )}</td>
-
                   <td>${esc(
                     item.source ||
                       "Unknown"
                   )}</td>
-
                   <td>${esc(
-                    item.confidence ??
-                      0
+                    item.confidence ?? 0
                   )}%</td>
                 </tr>
               `
@@ -696,22 +1066,18 @@ function App() {
                     item.ip ||
                       "Unknown"
                   )}</td>
-
                   <td>${esc(
                     item.country ||
                       "Unknown"
                   )}</td>
-
                   <td>${esc(
                     item.region ||
                       "Unknown"
                   )}</td>
-
                   <td>${esc(
                     item.city ||
                       "Unknown"
                   )}</td>
-
                   <td>${esc(
                     item.organization ||
                       "Unknown"
@@ -730,13 +1096,9 @@ function App() {
 
     win.document.write(`
       <!DOCTYPE html>
-
       <html>
         <head>
-          <title>
-            SENTINEL Security Analysis Report
-          </title>
-
+          <title>SENTINEL Security Analysis Report</title>
           <style>
             body {
               font-family: Arial, sans-serif;
@@ -830,12 +1192,10 @@ function App() {
         </head>
 
         <body>
-
           <h1>SENTINEL</h1>
 
           <div class="sub">
-            Email Threat Intelligence &
-            Forensic Analysis
+            Email Threat Intelligence & Forensic Analysis
           </div>
 
           <div class="sub">
@@ -846,7 +1206,6 @@ function App() {
           </div>
 
           <div class="risk">
-
             <div class="label">
               Threat Assessment
             </div>
@@ -859,18 +1218,13 @@ function App() {
               Risk Level:
               ${esc(riskLevel)}
             </strong>
-
           </div>
 
           <h2>Email Information</h2>
 
           <div class="grid">
-
             <div class="item">
-              <div class="label">
-                Filename
-              </div>
-
+              <div class="label">Filename</div>
               ${esc(
                 email.filename ||
                   file?.name ||
@@ -879,10 +1233,7 @@ function App() {
             </div>
 
             <div class="item">
-              <div class="label">
-                Sender
-              </div>
-
+              <div class="label">Sender</div>
               ${esc(
                 email.sender ||
                   "Not available"
@@ -890,10 +1241,7 @@ function App() {
             </div>
 
             <div class="item">
-              <div class="label">
-                Recipient
-              </div>
-
+              <div class="label">Recipient</div>
               ${esc(
                 email.recipient ||
                   "Not available"
@@ -901,10 +1249,7 @@ function App() {
             </div>
 
             <div class="item">
-              <div class="label">
-                Reply-To
-              </div>
-
+              <div class="label">Reply-To</div>
               ${esc(
                 email.reply_to ||
                   "Not available"
@@ -912,10 +1257,7 @@ function App() {
             </div>
 
             <div class="item">
-              <div class="label">
-                Date
-              </div>
-
+              <div class="label">Date</div>
               ${esc(
                 formatDate(
                   email.date
@@ -924,32 +1266,23 @@ function App() {
             </div>
 
             <div class="item">
-              <div class="label">
-                Subject
-              </div>
-
+              <div class="label">Subject</div>
               ${esc(
                 email.subject ||
                   "Not available"
               )}
             </div>
-
           </div>
 
-          <h2>
-            Detection Reasons
-          </h2>
+          <h2>Detection Reasons</h2>
 
           <ul>
             ${reasonHtml}
           </ul>
 
-          <h2>
-            Threat Intelligence
-          </h2>
+          <h2>Threat Intelligence</h2>
 
           <table>
-
             <thead>
               <tr>
                 <th>Indicator</th>
@@ -963,44 +1296,27 @@ function App() {
             <tbody>
               ${threatHtml}
             </tbody>
-
           </table>
 
-          <h2>
-            Forensic Indicators
-          </h2>
+          <h2>Forensic Indicators</h2>
 
           <h3>URLs</h3>
-          <ul>
-            ${urlHtml}
-          </ul>
+          <ul>${urlHtml}</ul>
 
           <h3>Domains</h3>
-          <ul>
-            ${domainHtml}
-          </ul>
+          <ul>${domainHtml}</ul>
 
           <h3>IP Addresses</h3>
-          <ul>
-            ${ipHtml}
-          </ul>
+          <ul>${ipHtml}</ul>
 
           <h3>Received Headers</h3>
-          <ul>
-            ${headerHtml}
-          </ul>
+          <ul>${headerHtml}</ul>
 
-          <h2>
-            Email Authentication
-          </h2>
+          <h2>Email Authentication</h2>
 
           <div class="grid">
-
             <div class="item">
-              <div class="label">
-                SPF
-              </div>
-
+              <div class="label">SPF</div>
               ${esc(
                 auth.spf ||
                   "Not Found"
@@ -1008,10 +1324,7 @@ function App() {
             </div>
 
             <div class="item">
-              <div class="label">
-                DKIM
-              </div>
-
+              <div class="label">DKIM</div>
               ${esc(
                 auth.dkim ||
                   "Not Found"
@@ -1022,21 +1335,16 @@ function App() {
               <div class="label">
                 Authentication Results
               </div>
-
               ${esc(
                 auth.authentication_results ||
                   "Not available"
               )}
             </div>
-
           </div>
 
-          <h2>
-            IP Geolocation
-          </h2>
+          <h2>IP Geolocation</h2>
 
           <table>
-
             <thead>
               <tr>
                 <th>IP</th>
@@ -1050,16 +1358,11 @@ function App() {
             <tbody>
               ${geoHtml}
             </tbody>
-
           </table>
 
-          <h2>
-            Email Body
-          </h2>
+          <h2>Email Body</h2>
 
-          <pre>
-${esc(body)}
-          </pre>
+          <pre>${esc(body)}</pre>
 
           <div class="footer">
             SENTINEL Security Operations Platform
@@ -1079,7 +1382,6 @@ ${esc(body)}
           >
             Print / Save as PDF
           </button>
-
         </body>
       </html>
     `);
@@ -1092,9 +1394,9 @@ ${esc(body)}
     }, 500);
   };
 
-  // ------------------------------------------------
+  // =================================================
   // UPLOAD SECTION
-  // ------------------------------------------------
+  // =================================================
 
   const UploadSection = () => (
     <section
@@ -1102,16 +1404,12 @@ ${esc(body)}
       ref={uploadRef}
     >
       <div className="panel-header">
-
         <div>
-          <h3>
-            Analyze Email
-          </h3>
+          <h3>Analyze Email</h3>
 
           <p>
-            Upload an email file for
-            forensic and threat
-            intelligence analysis.
+            Upload an email file for forensic
+            and threat intelligence analysis.
           </p>
         </div>
 
@@ -1123,11 +1421,9 @@ ${esc(body)}
             New Analysis
           </button>
         )}
-
       </div>
 
       <div className="upload-box">
-
         <div className="upload-icon">
           ✉
         </div>
@@ -1140,32 +1436,21 @@ ${esc(body)}
 
         <p>
           Select an{" "}
-          <strong>
-            .eml
-          </strong>{" "}
+          <strong>.eml</strong>{" "}
           or{" "}
-          <strong>
-            .pdf
-          </strong>{" "}
+          <strong>.pdf</strong>{" "}
           file to begin analysis.
         </p>
 
         <label className="file-button">
-
           Choose Email File
 
           <input
             type="file"
-            accept="
-              .eml,
-              .pdf,
-              message/rfc822,
-              application/pdf
-            "
+            accept=".eml,.pdf,message/rfc822,application/pdf"
             onChange={handleFile}
             hidden
           />
-
         </label>
 
         {file && (
@@ -1179,7 +1464,6 @@ ${esc(body)}
               : "Analyze Email"}
           </button>
         )}
-
       </div>
 
       {error && (
@@ -1187,21 +1471,387 @@ ${esc(body)}
           {error}
         </div>
       )}
-
     </section>
   );
 
-  // ------------------------------------------------
+  // =================================================
+  // GMAIL PAGE
+  // =================================================
+
+  const Gmail = () => (
+    <div>
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>📧 Gmail Integration</h3>
+
+            <p>
+              Connect Gmail and analyze messages
+              directly with the SENTINEL forensic engine.
+            </p>
+          </div>
+
+          {gmailConnected && (
+            <div
+              className="risk-badge risk-low"
+              style={{
+                whiteSpace: "nowrap",
+              }}
+            >
+              CONNECTED
+            </div>
+          )}
+        </div>
+
+        {!gmailConnected ? (
+          <div
+            className="empty-state"
+            style={{
+              padding: "40px 20px",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 48,
+                marginBottom: 15,
+              }}
+            >
+              📬
+            </div>
+
+            <h3>
+              Connect Your Gmail Account
+            </h3>
+
+            <p>
+              SENTINEL will use Gmail read-only
+              access to retrieve email messages
+              for security investigation.
+            </p>
+
+            <p
+              style={{
+                fontSize: 13,
+                opacity: 0.7,
+                maxWidth: 600,
+                margin: "10px auto 20px",
+              }}
+            >
+              SENTINEL does not send, delete, or
+              modify your Gmail messages.
+            </p>
+
+            <button
+              className="primary-button"
+              onClick={connectGmail}
+            >
+              🔐 Connect Gmail
+            </button>
+          </div>
+        ) : (
+          <div>
+            <div
+              style={{
+                padding: 20,
+                marginTop: 20,
+                border: "1px solid #dbe1ea",
+                borderRadius: 10,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 15,
+                flexWrap: "wrap",
+              }}
+            >
+              <div>
+                <span
+                  style={{
+                    display: "block",
+                    fontSize: 12,
+                    opacity: 0.65,
+                    marginBottom: 5,
+                  }}
+                >
+                  Connected Gmail Account
+                </span>
+
+                <strong>
+                  {gmailEmail ||
+                    "Gmail account connected"}
+                </strong>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  flexWrap: "wrap",
+                }}
+              >
+                <button
+                  className="primary-button"
+                  onClick={() =>
+                    loadGmailMessages()
+                  }
+                  disabled={gmailLoading}
+                >
+                  {gmailLoading
+                    ? "Loading..."
+                    : "↻ Load Gmail"}
+                </button>
+
+                <button
+                  className="secondary-button"
+                  onClick={
+                    disconnectGmail
+                  }
+                  disabled={gmailLoading}
+                >
+                  Disconnect
+                </button>
+              </div>
+            </div>
+
+            {gmailMessages.length === 0 ? (
+              <div
+                className="empty-state"
+                style={{
+                  marginTop: 20,
+                }}
+              >
+                <h3>
+                  Gmail Inbox Ready
+                </h3>
+
+                <p>
+                  Click "Load Gmail" to retrieve
+                  recent messages.
+                </p>
+
+                <button
+                  className="primary-button"
+                  onClick={() =>
+                    loadGmailMessages()
+                  }
+                  disabled={gmailLoading}
+                >
+                  📥 Load Gmail Messages
+                </button>
+              </div>
+            ) : (
+              <div
+                style={{
+                  marginTop: 20,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent:
+                      "space-between",
+                    alignItems: "center",
+                    marginBottom: 15,
+                    gap: 10,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div>
+                    <h4
+                      style={{
+                        margin: 0,
+                      }}
+                    >
+                      Recent Gmail Messages
+                    </h4>
+
+                    <p
+                      style={{
+                        margin:
+                          "5px 0 0",
+                        opacity: 0.65,
+                      }}
+                    >
+                      Select a message to run
+                      SENTINEL analysis.
+                    </p>
+                  </div>
+
+                  <span
+                    style={{
+                      fontSize: 13,
+                      opacity: 0.65,
+                    }}
+                  >
+                    {gmailMessages.length}{" "}
+                    messages loaded
+                  </span>
+                </div>
+
+                {gmailMessages.map(
+                  (message) => (
+                    <div
+                      key={message.id}
+                      className="panel"
+                      style={{
+                        marginBottom: 12,
+                        padding: 18,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent:
+                            "space-between",
+                          alignItems:
+                            "center",
+                          gap: 20,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <div
+                          style={{
+                            flex: 1,
+                            minWidth: 250,
+                          }}
+                        >
+                          <h4
+                            style={{
+                              margin:
+                                "0 0 8px",
+                              wordBreak:
+                                "break-word",
+                            }}
+                          >
+                            {message.subject ||
+                              "No Subject"}
+                          </h4>
+
+                          <div
+                            style={{
+                              fontSize: 13,
+                              marginBottom: 5,
+                            }}
+                          >
+                            <strong>
+                              From:
+                            </strong>{" "}
+                            {message.sender ||
+                              "Unknown"}
+                          </div>
+
+                          <div
+                            style={{
+                              fontSize: 13,
+                              marginBottom: 5,
+                            }}
+                          >
+                            <strong>
+                              To:
+                            </strong>{" "}
+                            {message.recipient ||
+                              "Unknown"}
+                          </div>
+
+                          <div
+                            style={{
+                              fontSize: 12,
+                              opacity: 0.65,
+                              marginBottom: 8,
+                            }}
+                          >
+                            {formatDate(
+                              message.date
+                            )}
+                          </div>
+
+                          {message.snippet && (
+                            <p
+                              style={{
+                                margin:
+                                  "8px 0 0",
+                                fontSize: 13,
+                                opacity: 0.7,
+                                lineHeight: 1.5,
+                              }}
+                            >
+                              {message.snippet}
+                            </p>
+                          )}
+                        </div>
+
+                        <button
+                          className="primary-button"
+                          onClick={() =>
+                            analyzeGmailMessage(
+                              message
+                            )
+                          }
+                          disabled={
+                            gmailAnalyzingId ===
+                            message.id
+                          }
+                        >
+                          {gmailAnalyzingId ===
+                          message.id
+                            ? "Analyzing..."
+                            : "🔍 Analyze"}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                )}
+
+                {gmailPageToken && (
+                  <div
+                    style={{
+                      textAlign: "center",
+                      marginTop: 20,
+                    }}
+                  >
+                    <button
+                      className="secondary-button"
+                      onClick={() =>
+                        loadGmailMessages(
+                          gmailPageToken
+                        )
+                      }
+                      disabled={
+                        gmailLoading
+                      }
+                    >
+                      {gmailLoading
+                        ? "Loading..."
+                        : "Load More Messages"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {gmailError && (
+          <div
+            className="error-message"
+            style={{
+              marginTop: 15,
+            }}
+          >
+            {gmailError}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+
+  // =================================================
   // DASHBOARD
-  // ------------------------------------------------
+  // =================================================
 
   const Dashboard = () => (
     <div>
-
       <section className="stats-grid">
-
         <div className="stat-card">
-
           <div className="stat-icon blue">
             ✉
           </div>
@@ -1215,11 +1865,9 @@ ${esc(body)}
               {totalEmails}
             </strong>
           </div>
-
         </div>
 
         <div className="stat-card">
-
           <div className="stat-icon red">
             ⚠
           </div>
@@ -1233,11 +1881,9 @@ ${esc(body)}
               {totalThreats}
             </strong>
           </div>
-
         </div>
 
         <div className="stat-card">
-
           <div className="stat-icon orange">
             !
           </div>
@@ -1251,11 +1897,9 @@ ${esc(body)}
               {highRiskCount}
             </strong>
           </div>
-
         </div>
 
         <div className="stat-card">
-
           <div className="stat-icon purple">
             ⌕
           </div>
@@ -1269,61 +1913,86 @@ ${esc(body)}
               {totalInvestigations}
             </strong>
           </div>
-
         </div>
-
       </section>
 
       <section className="panel">
-
         <div className="panel-header">
-
           <div>
             <h3>
-              Security Operations
-              Overview
+              Security Operations Overview
             </h3>
 
             <p>
-              Current investigation
-              activity and threat posture.
+              Current investigation activity
+              and threat posture.
             </p>
           </div>
 
-          <button
-            className="primary-button"
-            onClick={uploadPage}
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+            }}
           >
-            + Analyze Email
-          </button>
-
-        </div>
-
-        {history.length === 0 ? (
-
-          <div className="empty-state">
-
-            <h3>
-              No Investigations Yet
-            </h3>
-
-            <p>
-              Upload an .eml or .pdf
-              file to begin your first
-              SENTINEL investigation.
-            </p>
+            <button
+              className="secondary-button"
+              onClick={() =>
+                setPage("Gmail")
+              }
+            >
+              📧 Gmail
+            </button>
 
             <button
               className="primary-button"
               onClick={uploadPage}
             >
-              Analyze Email
+              + Analyze Email
             </button>
-
           </div>
+        </div>
 
+        {history.length === 0 ? (
+          <div className="empty-state">
+            <h3>
+              No Investigations Yet
+            </h3>
+
+            <p>
+              Upload an .eml or .pdf file,
+              or connect Gmail to begin
+              your first SENTINEL investigation.
+            </p>
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent:
+                  "center",
+                gap: 10,
+                flexWrap: "wrap",
+              }}
+            >
+              <button
+                className="primary-button"
+                onClick={uploadPage}
+              >
+                Analyze Email
+              </button>
+
+              <button
+                className="secondary-button"
+                onClick={() =>
+                  setPage("Gmail")
+                }
+              >
+                Connect Gmail
+              </button>
+            </div>
+          </div>
         ) : (
-
           <div
             style={{
               display: "grid",
@@ -1333,7 +2002,6 @@ ${esc(body)}
               marginTop: 20,
             }}
           >
-
             <div className="indicator-card">
               <span className="indicator-number">
                 {lowRiskCount}
@@ -1373,18 +2041,13 @@ ${esc(body)}
                 Critical
               </strong>
             </div>
-
           </div>
         )}
-
       </section>
 
       {history.length > 0 && (
-
         <section className="panel">
-
           <div className="panel-header">
-
             <div>
               <h3>
                 Recent Investigations
@@ -1404,7 +2067,6 @@ ${esc(body)}
             >
               View All
             </button>
-
           </div>
 
           <div
@@ -1412,11 +2074,9 @@ ${esc(body)}
               marginTop: 15,
             }}
           >
-
             {history
               .slice(0, 5)
               .map((item) => (
-
                 <div
                   key={item.id}
                   style={{
@@ -1428,15 +2088,15 @@ ${esc(body)}
                     padding: "15px 0",
                     borderBottom:
                       "1px solid #e5e7eb",
+                    flexWrap: "wrap",
                   }}
                 >
-
                   <div
                     style={{
                       minWidth: 0,
+                      flex: 1,
                     }}
                   >
-
                     <strong
                       style={{
                         display: "block",
@@ -1466,7 +2126,6 @@ ${esc(body)}
                         item.analyzedAt
                       )}
                     </div>
-
                   </div>
 
                   <div
@@ -1475,7 +2134,6 @@ ${esc(body)}
                       flexShrink: 0,
                     }}
                   >
-
                     <div
                       className={`risk-badge ${riskClass(
                         item.riskLevel
@@ -1492,40 +2150,33 @@ ${esc(body)}
                     >
                       {item.riskScore}/100
                     </strong>
-
                   </div>
 
                   <button
                     className="secondary-button"
                     onClick={() =>
-                      openHistoryItem(item)
+                      openHistoryItem(
+                        item
+                      )
                     }
                   >
                     Open
                   </button>
-
                 </div>
-
               ))}
-
           </div>
-
         </section>
-
       )}
-
     </div>
   );
 
-  // ------------------------------------------------
+  // =================================================
   // HISTORY
-  // ------------------------------------------------
+  // =================================================
 
   const History = () => (
     <section className="panel">
-
       <div className="panel-header">
-
         <div>
           <h3>
             Investigation History
@@ -1538,22 +2189,17 @@ ${esc(body)}
         </div>
 
         {history.length > 0 && (
-
           <button
             className="secondary-button"
             onClick={clearHistory}
           >
             Clear History
           </button>
-
         )}
-
       </div>
 
       {history.length === 0 ? (
-
         <div className="empty-state">
-
           <h3>
             No Investigation History
           </h3>
@@ -1569,19 +2215,14 @@ ${esc(body)}
           >
             Analyze Email
           </button>
-
         </div>
-
       ) : (
-
         <div
           style={{
             marginTop: 20,
           }}
         >
-
           {history.map((item) => (
-
             <div
               key={item.id}
               className="panel"
@@ -1590,7 +2231,6 @@ ${esc(body)}
                 padding: 20,
               }}
             >
-
               <div
                 style={{
                   display: "flex",
@@ -1601,9 +2241,7 @@ ${esc(body)}
                   flexWrap: "wrap",
                 }}
               >
-
                 <div>
-
                   <h4
                     style={{
                       margin: "0 0 6px",
@@ -1647,7 +2285,6 @@ ${esc(body)}
                       item.analyzedAt
                     )}
                   </p>
-
                 </div>
 
                 <div
@@ -1655,7 +2292,6 @@ ${esc(body)}
                     textAlign: "center",
                   }}
                 >
-
                   <div
                     className={`risk-badge ${riskClass(
                       item.riskLevel
@@ -1678,43 +2314,35 @@ ${esc(body)}
                     {item.malicious || 0}{" "}
                     malicious indicators
                   </small>
-
                 </div>
 
                 <button
                   className="primary-button"
                   onClick={() =>
-                    openHistoryItem(item)
+                    openHistoryItem(
+                      item
+                    )
                   }
                 >
                   Open Investigation
                 </button>
-
               </div>
-
             </div>
-
           ))}
-
         </div>
-
       )}
-
     </section>
   );
 
-  // ------------------------------------------------
+  // =================================================
   // RESULTS
-  // ------------------------------------------------
+  // =================================================
 
   const Results = () => {
-
     if (!data) {
       return (
         <section className="panel">
-
           <div className="empty-state">
-
             <h3>
               No Investigation Available
             </h3>
@@ -1730,17 +2358,13 @@ ${esc(body)}
             >
               Analyze Email
             </button>
-
           </div>
-
         </section>
       );
     }
 
     return (
-
       <div>
-
         <div className="success-message">
           <span>✓</span>
           Email analyzed successfully
@@ -1749,9 +2373,7 @@ ${esc(body)}
         {/* EMAIL INFORMATION */}
 
         <section className="panel">
-
           <div className="panel-header">
-
             <div>
               <h3>
                 Email Information
@@ -1763,10 +2385,17 @@ ${esc(body)}
               </p>
             </div>
 
+            {data.source_type ===
+              "GMAIL" && (
+              <div
+                className="risk-badge risk-low"
+              >
+                GMAIL
+              </div>
+            )}
           </div>
 
           <div className="info-grid">
-
             <div className="info-item">
               <span>
                 Filename
@@ -1834,17 +2463,26 @@ ${esc(body)}
                   "Not available"}
               </strong>
             </div>
-
           </div>
 
+          {email.gmail_message_id && (
+            <div
+              style={{
+                marginTop: 15,
+                fontSize: 12,
+                opacity: 0.65,
+              }}
+            >
+              Gmail Message ID:{" "}
+              {email.gmail_message_id}
+            </div>
+          )}
         </section>
 
         {/* THREAT ASSESSMENT */}
 
         <section className="panel">
-
           <div className="panel-header">
-
             <div>
               <h3>
                 Threat Assessment
@@ -1863,13 +2501,10 @@ ${esc(body)}
             >
               {riskLevel}
             </div>
-
           </div>
 
           <div className="threat-layout">
-
             <div className="score-card">
-
               <div
                 className={`risk-score ${scoreClass(
                   riskScore
@@ -1881,48 +2516,40 @@ ${esc(body)}
               <span>
                 Threat Score / 100
               </span>
-
             </div>
 
             <div className="risk-reasons">
-
               <h4>
                 Detection Reasons
               </h4>
 
               {reasons.length ? (
-
                 <ul>
                   {reasons.map(
-                    (reason, index) => (
+                    (
+                      reason,
+                      index
+                    ) => (
                       <li key={index}>
                         {reason}
                       </li>
                     )
                   )}
                 </ul>
-
               ) : (
-
                 <p>
                   No suspicious indicators
                   detected.
                 </p>
-
               )}
-
             </div>
-
           </div>
-
         </section>
 
         {/* DETAILED THREAT ANALYSIS */}
 
         <section className="panel">
-
           <div className="panel-header">
-
             <div>
               <h3>
                 Detailed Threat Analysis
@@ -1934,11 +2561,9 @@ ${esc(body)}
                 findings.
               </p>
             </div>
-
           </div>
 
           <div className="indicator-grid">
-
             <div className="indicator-card">
               <span className="indicator-number">
                 {summary.total_indicators ??
@@ -1952,7 +2577,8 @@ ${esc(body)}
 
             <div className="indicator-card">
               <span className="indicator-number">
-                {summary.malicious || 0}
+                {summary.malicious ||
+                  0}
               </span>
 
               <strong>
@@ -1962,7 +2588,8 @@ ${esc(body)}
 
             <div className="indicator-card">
               <span className="indicator-number">
-                {summary.suspicious || 0}
+                {summary.suspicious ||
+                  0}
               </span>
 
               <strong>
@@ -1979,20 +2606,16 @@ ${esc(body)}
                 Clean
               </strong>
             </div>
-
           </div>
 
           {indicators.length > 0 && (
-
             <div
               style={{
                 marginTop: 20,
               }}
             >
-
               {indicators.map(
                 (item, index) => {
-
                   const status =
                     item.status ||
                     "UNKNOWN";
@@ -2013,7 +2636,6 @@ ${esc(body)}
                       : "";
 
                   return (
-
                     <div
                       className="panel"
                       key={index}
@@ -2021,7 +2643,6 @@ ${esc(body)}
                         marginBottom: 12,
                       }}
                     >
-
                       <div
                         style={{
                           display: "flex",
@@ -2032,7 +2653,6 @@ ${esc(body)}
                           gap: 15,
                         }}
                       >
-
                         <strong
                           style={{
                             wordBreak:
@@ -2048,7 +2668,6 @@ ${esc(body)}
                         >
                           {status}
                         </span>
-
                       </div>
 
                       <div
@@ -2057,7 +2676,6 @@ ${esc(body)}
                           marginTop: 15,
                         }}
                       >
-
                         <div className="info-item">
                           <span>
                             Type
@@ -2138,9 +2756,7 @@ ${esc(body)}
 
                         {item.abuse_confidence_score !==
                           undefined && (
-
                           <div className="info-item">
-
                             <span>
                               AbuseIPDB Confidence
                             </span>
@@ -2151,16 +2767,12 @@ ${esc(body)}
                               }
                               %
                             </strong>
-
                           </div>
-
                         )}
 
                         {item.total_reports !==
                           undefined && (
-
                           <div className="info-item">
-
                             <span>
                               Reports
                             </span>
@@ -2170,31 +2782,21 @@ ${esc(body)}
                                 item.total_reports
                               }
                             </strong>
-
                           </div>
-
                         )}
-
                       </div>
-
                     </div>
-
                   );
                 }
               )}
-
             </div>
-
           )}
-
         </section>
 
         {/* INVESTIGATION SUMMARY */}
 
         <section className="panel">
-
           <div className="panel-header">
-
             <div>
               <h3>
                 Investigation Summary
@@ -2205,11 +2807,9 @@ ${esc(body)}
                 the investigation.
               </p>
             </div>
-
           </div>
 
           <div className="indicator-grid">
-
             <div className="indicator-card">
               <span className="indicator-number">
                 {urls.length}
@@ -2249,17 +2849,13 @@ ${esc(body)}
                 Threat Indicators
               </strong>
             </div>
-
           </div>
-
         </section>
 
         {/* FORENSIC INDICATORS */}
 
         <section className="panel">
-
           <div className="panel-header">
-
             <div>
               <h3>
                 Forensic Indicators
@@ -2270,11 +2866,9 @@ ${esc(body)}
                 from the email.
               </p>
             </div>
-
           </div>
 
           <div className="indicator-grid">
-
             <div className="indicator-card">
               <span className="indicator-number">
                 {urls.length}
@@ -2314,19 +2908,15 @@ ${esc(body)}
                 Received Headers
               </strong>
             </div>
-
           </div>
 
           {urls.length > 0 && (
-
             <div className="indicator-section">
-
               <h4>
                 Extracted URLs
               </h4>
 
               <div className="tag-list">
-
                 {urls.map(
                   (item, index) => (
                     <span
@@ -2337,23 +2927,17 @@ ${esc(body)}
                     </span>
                   )
                 )}
-
               </div>
-
             </div>
-
           )}
 
           {domains.length > 0 && (
-
             <div className="indicator-section">
-
               <h4>
                 Extracted Domains
               </h4>
 
               <div className="tag-list">
-
                 {domains.map(
                   (item, index) => (
                     <span
@@ -2364,23 +2948,17 @@ ${esc(body)}
                     </span>
                   )
                 )}
-
               </div>
-
             </div>
-
           )}
 
           {ips.length > 0 && (
-
             <div className="indicator-section">
-
               <h4>
                 IP Addresses
               </h4>
 
               <div className="tag-list">
-
                 {ips.map(
                   (item, index) => (
                     <span
@@ -2391,21 +2969,36 @@ ${esc(body)}
                     </span>
                   )
                 )}
-
               </div>
-
             </div>
-
           )}
 
+          {received.length > 0 && (
+            <div className="indicator-section">
+              <h4>
+                Received Headers
+              </h4>
+
+              <div className="tag-list">
+                {received.map(
+                  (item, index) => (
+                    <span
+                      className="tag"
+                      key={index}
+                    >
+                      {item}
+                    </span>
+                  )
+                )}
+              </div>
+            </div>
+          )}
         </section>
 
         {/* AUTHENTICATION */}
 
         <section className="panel">
-
           <div className="panel-header">
-
             <div>
               <h3>
                 Email Authentication
@@ -2416,13 +3009,10 @@ ${esc(body)}
                 Authentication-Results.
               </p>
             </div>
-
           </div>
 
           <div className="auth-grid">
-
             <div className="auth-card">
-
               <span>
                 SPF
               </span>
@@ -2431,11 +3021,9 @@ ${esc(body)}
                 {auth.spf ||
                   "Not Found"}
               </strong>
-
             </div>
 
             <div className="auth-card">
-
               <span>
                 DKIM
               </span>
@@ -2444,11 +3032,9 @@ ${esc(body)}
                 {auth.dkim ||
                   "Not Found"}
               </strong>
-
             </div>
 
             <div className="auth-card">
-
               <span>
                 Authentication Results
               </span>
@@ -2457,21 +3043,15 @@ ${esc(body)}
                 {auth.authentication_results ||
                   "Not available"}
               </strong>
-
             </div>
-
           </div>
-
         </section>
 
         {/* THREAT INTELLIGENCE */}
 
         {settings.threatIntel && (
-
           <section className="panel">
-
             <div className="panel-header">
-
               <div>
                 <h3>
                   Threat Intelligence
@@ -2482,13 +3062,10 @@ ${esc(body)}
                   results.
                 </p>
               </div>
-
             </div>
 
             <div className="indicator-grid">
-
               <div className="indicator-card">
-
                 <span className="indicator-number">
                   {summary.total_indicators ??
                     indicators.length}
@@ -2497,58 +3074,53 @@ ${esc(body)}
                 <strong>
                   Total
                 </strong>
-
               </div>
 
               <div className="indicator-card">
-
                 <span className="indicator-number">
-                  {summary.malicious || 0}
+                  {summary.malicious ||
+                    0}
                 </span>
 
                 <strong>
                   Malicious
                 </strong>
-
               </div>
 
               <div className="indicator-card">
-
                 <span className="indicator-number">
-                  {summary.suspicious || 0}
+                  {summary.suspicious ||
+                    0}
                 </span>
 
                 <strong>
                   Suspicious
                 </strong>
-
               </div>
 
               <div className="indicator-card">
-
                 <span className="indicator-number">
-                  {summary.clean || 0}
+                  {summary.clean ||
+                    0}
                 </span>
 
                 <strong>
                   Clean
                 </strong>
-
               </div>
-
             </div>
 
             {indicators.length > 0 && (
-
               <div
                 style={{
                   marginTop: 20,
                 }}
               >
-
                 {indicators.map(
-                  (item, index) => (
-
+                  (
+                    item,
+                    index
+                  ) => (
                     <div
                       className="panel"
                       key={index}
@@ -2556,60 +3128,45 @@ ${esc(body)}
                         marginBottom: 12,
                       }}
                     >
-
                       <strong>
                         {item.indicator ||
                           "Unknown"}
                       </strong>
 
                       <p>
-
                         Type:{" "}
                         {item.type ||
                           "Unknown"}
-
                         <br />
 
                         Status:{" "}
                         {item.status ||
                           "Unknown"}
-
                         <br />
 
                         Source:{" "}
                         {item.source ||
                           "Threat Intelligence"}
-
                         <br />
 
                         Confidence:{" "}
                         {item.confidence ??
                           0}
                         %
-
                       </p>
-
                     </div>
-
                   )
                 )}
-
               </div>
-
             )}
-
           </section>
-
         )}
 
         {/* GEOLOCATION */}
 
         {settings.geolocation && (
-
           <section className="panel">
-
             <div className="panel-header">
-
               <div>
                 <h3>
                   🌍 IP Geolocation
@@ -2620,29 +3177,25 @@ ${esc(body)}
                   from public IPs.
                 </p>
               </div>
-
             </div>
 
             {geo.length > 0 ? (
-
               <div className="geo-grid">
-
                 {geo.map(
-                  (item, index) => (
-
+                  (
+                    item,
+                    index
+                  ) => (
                     <div
                       className="geo-card"
                       key={index}
                     >
-
                       <div className="geo-card-header">
-
                         <div className="geo-globe">
                           🌐
                         </div>
 
                         <div>
-
                           <h4>
                             {item.ip ||
                               "Unknown IP"}
@@ -2652,13 +3205,10 @@ ${esc(body)}
                             {item.country ||
                               "Unknown"}
                           </span>
-
                         </div>
-
                       </div>
 
                       <div className="geo-details">
-
                         <div>
                           <span>
                             Country
@@ -2702,37 +3252,25 @@ ${esc(body)}
                               "Unknown"}
                           </strong>
                         </div>
-
                       </div>
-
                     </div>
-
                   )
                 )}
-
               </div>
-
             ) : (
-
               <p>
                 No public IP geolocation
                 available.
               </p>
-
             )}
-
           </section>
-
         )}
 
         {/* MAP */}
 
         <section className="panel">
-
           <div className="panel-header">
-
             <div>
-
               <h3>
                 🗺️ IP Geolocation Map
               </h3>
@@ -2741,9 +3279,7 @@ ${esc(body)}
                 Visual representation
                 of detected public IPs.
               </p>
-
             </div>
-
           </div>
 
           {geo.some(
@@ -2751,7 +3287,6 @@ ${esc(body)}
               item.latitude != null &&
               item.longitude != null
           ) ? (
-
             <MapContainer
               center={[
                 Number(
@@ -2761,7 +3296,6 @@ ${esc(body)}
                       item.longitude != null
                   ).latitude
                 ),
-
                 Number(
                   geo.find(
                     (item) =>
@@ -2777,17 +3311,18 @@ ${esc(body)}
                 borderRadius: "10px",
               }}
             >
-
               <TileLayer
                 attribution="&copy; OpenStreetMap contributors"
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
 
               {geo.map(
-                (item, index) =>
+                (
+                  item,
+                  index
+                ) =>
                   item.latitude != null &&
                   item.longitude != null ? (
-
                     <Marker
                       key={index}
                       position={[
@@ -2799,9 +3334,7 @@ ${esc(body)}
                         ),
                       ]}
                     >
-
                       <Popup>
-
                         <strong>
                           IP:{" "}
                           {item.ip ||
@@ -2825,35 +3358,24 @@ ${esc(body)}
                         Organization:{" "}
                         {item.organization ||
                           "Unknown"}
-
                       </Popup>
-
                     </Marker>
-
                   ) : null
               )}
-
             </MapContainer>
-
           ) : (
-
             <p>
               No mappable public IP
               location.
             </p>
-
           )}
-
         </section>
 
         {/* EMAIL BODY */}
 
         <section className="panel">
-
           <div className="panel-header">
-
             <div>
-
               <h3>
                 Email Body
               </h3>
@@ -2861,9 +3383,7 @@ ${esc(body)}
               <p>
                 Extracted message content.
               </p>
-
             </div>
-
           </div>
 
           <div
@@ -2875,13 +3395,11 @@ ${esc(body)}
           >
             {body}
           </div>
-
         </section>
 
         {/* ACTIONS */}
 
         <div className="investigation-actions">
-
           <button
             className="primary-button"
             onClick={generateReport}
@@ -2895,16 +3413,14 @@ ${esc(body)}
           >
             ↻ New Investigation
           </button>
-
         </div>
-
       </div>
     );
   };
 
-  // ------------------------------------------------
+  // =================================================
   // SETTINGS
-  // ------------------------------------------------
+  // =================================================
 
   const Settings = () => (
     <section
@@ -2913,11 +3429,8 @@ ${esc(body)}
         padding: 28,
       }}
     >
-
       <div className="panel-header">
-
         <div>
-
           <h3>
             Settings
           </h3>
@@ -2926,9 +3439,7 @@ ${esc(body)}
             Configure SENTINEL analysis
             preferences.
           </p>
-
         </div>
-
       </div>
 
       <div
@@ -2936,7 +3447,6 @@ ${esc(body)}
           marginTop: 25,
         }}
       >
-
         <h4>
           Analysis Features
         </h4>
@@ -2947,13 +3457,11 @@ ${esc(body)}
             "Threat Intelligence",
             "VirusTotal and AbuseIPDB intelligence.",
           ],
-
           [
             "geolocation",
             "IP Geolocation",
             "Display geographical information for public IPs.",
           ],
-
           [
             "riskScoring",
             "Automatic Risk Scoring",
@@ -2965,7 +3473,6 @@ ${esc(body)}
             title,
             description,
           ]) => (
-
             <div
               key={key}
               style={{
@@ -2978,11 +3485,10 @@ ${esc(body)}
                 border:
                   "1px solid #dbe1ea",
                 borderRadius: "10px",
+                gap: 20,
               }}
             >
-
               <div>
-
                 <strong>
                   {title}
                 </strong>
@@ -2996,7 +3502,6 @@ ${esc(body)}
                 >
                   {description}
                 </p>
-
               </div>
 
               <button
@@ -3009,12 +3514,9 @@ ${esc(body)}
                   ? "ON"
                   : "OFF"}
               </button>
-
             </div>
-
           )
         )}
-
       </div>
 
       <div
@@ -3022,13 +3524,68 @@ ${esc(body)}
           marginTop: 30,
         }}
       >
+        <h4>
+          Gmail Integration
+        </h4>
 
+        <div
+          style={{
+            padding: 18,
+            border:
+              "1px solid #dbe1ea",
+            borderRadius: 10,
+            marginTop: 12,
+          }}
+        >
+          <strong>
+            Gmail Status
+          </strong>
+
+          <p
+            style={{
+              margin:
+                "6px 0 12px",
+              opacity: 0.7,
+            }}
+          >
+            {gmailConnected
+              ? `Connected: ${
+                  gmailEmail ||
+                  "Gmail account"
+                }`
+              : "Not connected"}
+          </p>
+
+          {gmailConnected ? (
+            <button
+              className="secondary-button"
+              onClick={
+                disconnectGmail
+              }
+            >
+              Disconnect Gmail
+            </button>
+          ) : (
+            <button
+              className="primary-button"
+              onClick={connectGmail}
+            >
+              Connect Gmail
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div
+        style={{
+          marginTop: 30,
+        }}
+      >
         <h4>
           System Status
         </h4>
 
         <div className="indicator-grid">
-
           <div className="indicator-card">
             <strong>
               ● Backend
@@ -3069,8 +3626,18 @@ ${esc(body)}
             </span>
           </div>
 
-        </div>
+          <div className="indicator-card">
+            <strong>
+              ● Gmail API
+            </strong>
 
+            <span>
+              {gmailConnected
+                ? "Connected"
+                : "Available"}
+            </span>
+          </div>
+        </div>
       </div>
 
       <div
@@ -3078,7 +3645,6 @@ ${esc(body)}
           marginTop: 30,
         }}
       >
-
         <h4>
           About SENTINEL
         </h4>
@@ -3100,23 +3666,18 @@ ${esc(body)}
           Version 1.0 • Security
           Operations Platform
         </p>
-
       </div>
-
     </section>
   );
 
-  // ------------------------------------------------
+  // =================================================
   // REPORTS
-  // ------------------------------------------------
+  // =================================================
 
   const Reports = () => (
     <section className="panel">
-
       <div className="panel-header">
-
         <div>
-
           <h3>
             📄 Security Report
           </h3>
@@ -3126,19 +3687,15 @@ ${esc(body)}
             report for the current
             investigation.
           </p>
-
         </div>
-
       </div>
 
       {data ? (
-
         <div
           style={{
             padding: 20,
           }}
         >
-
           <h4>
             Investigation Report Ready
           </h4>
@@ -3166,17 +3723,15 @@ ${esc(body)}
 
           <button
             className="primary-button"
-            onClick={generateReport}
+            onClick={
+              generateReport
+            }
           >
             📄 Generate PDF / Print Report
           </button>
-
         </div>
-
       ) : (
-
         <div className="empty-state">
-
           <h3>
             No Report Available
           </h3>
@@ -3192,34 +3747,26 @@ ${esc(body)}
           >
             Analyze Email
           </button>
-
         </div>
-
       )}
-
     </section>
   );
 
-  // ------------------------------------------------
+  // =================================================
   // MAIN UI
-  // ------------------------------------------------
+  // =================================================
 
   return (
-
     <div className="app">
-
       {/* SIDEBAR */}
 
       <aside className="sidebar">
-
         <div className="brand">
-
           <div className="brand-icon">
             S
           </div>
 
           <div>
-
             <h1>
               SENTINEL
             </h1>
@@ -3227,20 +3774,19 @@ ${esc(body)}
             <span>
               Threat Intelligence
             </span>
-
           </div>
-
         </div>
 
         <nav className="navigation">
-
           <button
             className={`nav-item ${
               page === "Dashboard"
                 ? "active"
                 : ""
             }`}
-            onClick={dashboard}
+            onClick={
+              dashboard
+            }
           >
             <span>
               ▦
@@ -3255,7 +3801,9 @@ ${esc(body)}
                 ? "active"
                 : ""
             }`}
-            onClick={uploadPage}
+            onClick={
+              uploadPage
+            }
           >
             <span>
               ✉
@@ -3266,11 +3814,36 @@ ${esc(body)}
 
           <button
             className={`nav-item ${
+              page === "Gmail"
+                ? "active"
+                : ""
+            }`}
+            onClick={() => {
+              setPage("Gmail");
+              setGmailError("");
+
+              window.scrollTo({
+                top: 0,
+                behavior: "smooth",
+              });
+            }}
+          >
+            <span>
+              📧
+            </span>
+
+            Gmail
+          </button>
+
+          <button
+            className={`nav-item ${
               page === "Investigate"
                 ? "active"
                 : ""
             }`}
-            onClick={investigate}
+            onClick={
+              investigate
+            }
           >
             <span>
               ⌕
@@ -3285,7 +3858,9 @@ ${esc(body)}
                 ? "active"
                 : ""
             }`}
-            onClick={reports}
+            onClick={
+              reports
+            }
           >
             <span>
               ▤
@@ -3337,17 +3912,13 @@ ${esc(body)}
 
             Settings
           </button>
-
         </nav>
 
         <div className="sidebar-bottom">
-
           <div className="system-status">
-
             <span className="status-dot"></span>
 
             <div>
-
               <strong>
                 System Online
               </strong>
@@ -3355,9 +3926,7 @@ ${esc(body)}
               <small>
                 All services operational
               </small>
-
             </div>
-
           </div>
 
           <div
@@ -3367,7 +3936,6 @@ ${esc(body)}
               lineHeight: 1.7,
             }}
           >
-
             <div>
               ● SENTINEL Engine Ready
             </div>
@@ -3380,20 +3948,21 @@ ${esc(body)}
               ● Forensic Analyzer Ready
             </div>
 
+            <div>
+              ● Gmail Integration{" "}
+              {gmailConnected
+                ? "Connected"
+                : "Ready"}
+            </div>
           </div>
-
         </div>
-
       </aside>
 
       {/* MAIN */}
 
       <main className="main-content">
-
         <header className="topbar">
-
           <div>
-
             <h2>
               {page}
             </h2>
@@ -3402,17 +3971,14 @@ ${esc(body)}
               Email threat intelligence &
               forensic analysis
             </p>
-
           </div>
 
           <div className="analyst">
-
             <div className="analyst-avatar">
               A
             </div>
 
             <div>
-
               <strong>
                 Analyst
               </strong>
@@ -3420,15 +3986,11 @@ ${esc(body)}
               <span>
                 Security Operations
               </span>
-
             </div>
-
           </div>
-
         </header>
 
         <div className="content">
-
           {page === "Dashboard" && (
             <Dashboard />
           )}
@@ -3441,6 +4003,10 @@ ${esc(body)}
                 <Results />
               )}
             </>
+          )}
+
+          {page === "Gmail" && (
+            <Gmail />
           )}
 
           {page === "Investigate" && (
@@ -3458,11 +4024,8 @@ ${esc(body)}
           {page === "Settings" && (
             <Settings />
           )}
-
         </div>
-
       </main>
-
     </div>
   );
 }
