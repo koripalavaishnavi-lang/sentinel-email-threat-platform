@@ -11,6 +11,7 @@ from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from dotenv import load_dotenv
+
 import base64
 import ipaddress
 import io
@@ -54,7 +55,6 @@ GMAIL_SCOPES = [
 ]
 
 gmail_credentials = None
-oauth_states = set()
 
 # =========================
 # APP
@@ -121,6 +121,7 @@ def db():
         raise RuntimeError(
             "DATABASE_URL is not configured in Render."
         )
+
     return psycopg2.connect(DATABASE_URL)
 
 
@@ -143,6 +144,13 @@ def init_gmail_database():
                 refresh_token TEXT,
                 token_uri TEXT NOT NULL,
                 scopes TEXT NOT NULL
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS gmail_oauth_states (
+                state TEXT PRIMARY KEY,
+                code_verifier TEXT NOT NULL
             )
         """)
 
@@ -252,6 +260,57 @@ def delete_gmail_credentials():
             "Gmail credential delete error:",
             e
         )
+
+
+# =========================
+# OAUTH STATE / PKCE
+# =========================
+
+def save_oauth_state(state, code_verifier):
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO gmail_oauth_states
+        (state, code_verifier)
+        VALUES (%s, %s)
+        ON CONFLICT(state)
+        DO UPDATE SET
+            code_verifier = EXCLUDED.code_verifier
+    """, (
+        state,
+        code_verifier
+    ))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def load_and_delete_oauth_state(state):
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT code_verifier
+        FROM gmail_oauth_states
+        WHERE state = %s
+    """, (state,))
+
+    row = cur.fetchone()
+
+    if row:
+        cur.execute("""
+            DELETE FROM gmail_oauth_states
+            WHERE state = %s
+        """, (state,))
+
+        conn.commit()
+
+    cur.close()
+    conn.close()
+
+    return row[0] if row else None
 
 
 init_gmail_database()
@@ -602,6 +661,7 @@ def check_vt(
             "VirusTotal error:",
             e
         )
+
         result["source"] = (
             "VirusTotal request failed"
         )
@@ -723,6 +783,7 @@ def check_abuseipdb(ip):
             "AbuseIPDB error:",
             e
         )
+
         result["source"] = (
             "AbuseIPDB request failed"
         )
@@ -776,7 +837,6 @@ def local_domain_intelligence(domain):
 def check_ip_threat_intelligence(ip):
     vt = check_virustotal_ip(ip)
     abuse = check_abuseipdb(ip)
-
     local = local_ip_intelligence(ip)
 
     if local:
@@ -789,13 +849,10 @@ def check_ip_threat_intelligence(ip):
 
     if "MALICIOUS" in statuses:
         overall = "MALICIOUS"
-
     elif "SUSPICIOUS" in statuses:
         overall = "SUSPICIOUS"
-
     elif "CLEAN" in statuses:
         overall = "CLEAN"
-
     else:
         overall = "UNKNOWN"
 
@@ -868,6 +925,7 @@ def calculate_risk(
             len(urls) * 5,
             20
         )
+
         reasons.append(
             f"{len(urls)} URL(s) found"
         )
@@ -882,6 +940,7 @@ def calculate_risk(
             len(public_ips) * 5,
             15
         )
+
         reasons.append(
             f"{len(public_ips)} "
             "public IP address(es) found"
@@ -919,6 +978,7 @@ def calculate_risk(
             len(found) * 5,
             25
         )
+
         reasons.append(
             "Suspicious/phishing keywords detected"
         )
@@ -946,6 +1006,7 @@ def calculate_risk(
             len(malicious) * 30,
             70
         )
+
         reasons.append(
             "Threat intelligence identified "
             f"{len(malicious)} "
@@ -957,6 +1018,7 @@ def calculate_risk(
             len(suspicious) * 15,
             40
         )
+
         reasons.append(
             "Threat intelligence identified "
             f"{len(suspicious)} "
@@ -1022,7 +1084,6 @@ async def analyze_bytes(
         reply_to = fields["reply_to"]
         subject = fields["subject"]
         date = fields["date"]
-
         formatted_date = date
         header_text = body
 
@@ -1160,26 +1221,19 @@ async def analyze_bytes(
 
     counts = {
         "malicious": sum(
-            item.get("status")
-            == "MALICIOUS"
+            item.get("status") == "MALICIOUS"
             for item in all_intelligence
         ),
-
         "suspicious": sum(
-            item.get("status")
-            == "SUSPICIOUS"
+            item.get("status") == "SUSPICIOUS"
             for item in all_intelligence
         ),
-
         "clean": sum(
-            item.get("status")
-            == "CLEAN"
+            item.get("status") == "CLEAN"
             for item in all_intelligence
         ),
-
         "unknown": sum(
-            item.get("status")
-            not in (
+            item.get("status") not in (
                 "MALICIOUS",
                 "SUSPICIOUS",
                 "CLEAN"
@@ -1213,6 +1267,7 @@ async def analyze_bytes(
     return {
         "success": True,
         "source_type": source_type,
+
         "email": {
             "filename": filename,
             "sender": sender,
@@ -1221,12 +1276,14 @@ async def analyze_bytes(
             "date": formatted_date,
             "subject": subject
         },
+
         "forensics": {
             "urls": urls,
             "domains": domains,
             "ip_addresses": ips,
             "received_headers": received_headers
         },
+
         "authentication": authentication,
         "geolocation": geolocation,
         "threat_intelligence": threat_intelligence,
@@ -1266,7 +1323,6 @@ async def analyze_email(
 # =========================
 
 def google_flow():
-
     if (
         not GOOGLE_CLIENT_ID
         or not GOOGLE_CLIENT_SECRET
@@ -1281,12 +1337,13 @@ def google_flow():
         "web": {
             "client_id": GOOGLE_CLIENT_ID,
             "client_secret": GOOGLE_CLIENT_SECRET,
-            "auth_uri": (
-                "https://accounts.google.com/o/oauth2/auth"
-            ),
-            "token_uri": (
-                "https://oauth2.googleapis.com/token"
-            ),
+
+            "auth_uri":
+                "https://accounts.google.com/o/oauth2/auth",
+
+            "token_uri":
+                "https://oauth2.googleapis.com/token",
+
             "redirect_uris": [
                 GOOGLE_REDIRECT_URI
             ]
@@ -1302,15 +1359,10 @@ def google_flow():
 
 @app.get("/api/auth/google")
 def google_login():
-
     try:
         flow = google_flow()
 
-        state = secrets.token_urlsafe(
-            32
-        )
-
-        oauth_states.add(state)
+        state = secrets.token_urlsafe(32)
 
         url, _ = flow.authorization_url(
             access_type="offline",
@@ -1319,9 +1371,26 @@ def google_login():
             state=state
         )
 
+        # IMPORTANT:
+        # Persist PKCE verifier in PostgreSQL.
+        save_oauth_state(
+            state,
+            flow.code_verifier
+        )
+
+        print(
+            "Google OAuth state saved:",
+            state
+        )
+
         return RedirectResponse(url)
 
     except Exception as e:
+        print(
+            "Google login error:",
+            e
+        )
+
         return {
             "success": False,
             "error": str(e)
@@ -1336,18 +1405,35 @@ def google_callback(
     global gmail_credentials
 
     try:
+        if not code or not state:
+            print(
+                "Google OAuth callback missing code/state."
+            )
 
-        if (
-            not code
-            or state not in oauth_states
-        ):
             return RedirectResponse(
                 f"{FRONTEND_URL}?gmail=error"
             )
 
-        oauth_states.discard(state)
+        # Retrieve the PKCE verifier saved
+        # during the authorization request.
+        code_verifier = load_and_delete_oauth_state(
+            state
+        )
+
+        if not code_verifier:
+            print(
+                "Google OAuth error: "
+                "OAuth state/code verifier not found."
+            )
+
+            return RedirectResponse(
+                f"{FRONTEND_URL}?gmail=error"
+            )
 
         flow = google_flow()
+
+        # Restore PKCE verifier before token exchange.
+        flow.code_verifier = code_verifier
 
         flow.fetch_token(
             code=code
@@ -1361,12 +1447,16 @@ def google_callback(
             gmail_credentials
         )
 
+        print(
+            "Google OAuth successful. "
+            "Gmail credentials saved."
+        )
+
         return RedirectResponse(
             f"{FRONTEND_URL}?gmail=connected"
         )
 
     except Exception as e:
-
         print(
             "Google OAuth error:",
             e
@@ -1418,9 +1508,7 @@ def gmail_service():
 
 @app.get("/api/gmail/status")
 def gmail_status():
-
     try:
-
         service = gmail_service()
 
         profile = (
@@ -1448,7 +1536,6 @@ def gmail_status():
         }
 
     except Exception as e:
-
         print(
             "Gmail status error:",
             e
@@ -1462,7 +1549,6 @@ def gmail_status():
 
 @app.post("/api/gmail/disconnect")
 def gmail_disconnect():
-
     global gmail_credentials
 
     gmail_credentials = None
@@ -1484,7 +1570,6 @@ def gmail_messages(
     page_token: str = None
 ):
     try:
-
         max_results = max(
             1,
             min(
@@ -1516,7 +1601,6 @@ def gmail_messages(
             "messages",
             []
         ):
-
             message_id = item.get(
                 "id"
             )
@@ -1525,7 +1609,6 @@ def gmail_messages(
                 continue
 
             try:
-
                 message = (
                     service.users()
                     .messages()
@@ -1545,13 +1628,11 @@ def gmail_messages(
                 )
 
             except Exception as e:
-
                 print(
                     "Skipping Gmail message:",
                     message_id,
                     e
                 )
-
                 continue
 
             headers = {
@@ -1618,7 +1699,6 @@ def gmail_messages(
         }
 
     except Exception as e:
-
         print(
             "Gmail messages error:",
             e
@@ -1634,7 +1714,6 @@ def gmail_messages(
 # =========================
 
 def decode_gmail_raw(raw):
-
     padding = "=" * (
         (-len(raw)) % 4
     )
@@ -1654,13 +1733,13 @@ async def analyze_gmail(
     message_id: str
 ):
     try:
-
         service = gmail_service()
 
-        # First verify the message exists
-        # in the currently connected account.
-        try:
+        # -------------------------
+        # Verify message exists
+        # -------------------------
 
+        try:
             metadata = (
                 service.users()
                 .messages()
@@ -1680,7 +1759,6 @@ async def analyze_gmail(
             )
 
         except Exception as e:
-
             print(
                 "Gmail message lookup error:",
                 e
@@ -1695,9 +1773,11 @@ async def analyze_gmail(
                 "message_id": message_id
             }
 
-        # Now retrieve the raw email.
-        try:
+        # -------------------------
+        # Retrieve raw email
+        # -------------------------
 
+        try:
             message = (
                 service.users()
                 .messages()
@@ -1710,7 +1790,6 @@ async def analyze_gmail(
             )
 
         except Exception as e:
-
             print(
                 "Gmail raw message error:",
                 e
@@ -1738,9 +1817,17 @@ async def analyze_gmail(
                 "message_id": message_id
             }
 
+        # -------------------------
+        # Decode raw email
+        # -------------------------
+
         email_bytes = decode_gmail_raw(
             raw
         )
+
+        # -------------------------
+        # Run SENTINEL analysis
+        # -------------------------
 
         result = await analyze_bytes(
             email_bytes,
@@ -1768,7 +1855,6 @@ async def analyze_gmail(
         return result
 
     except Exception as e:
-
         print(
             "Gmail analysis error:",
             e
@@ -1785,7 +1871,6 @@ async def analyze_gmail(
 # =========================
 
 if __name__ == "__main__":
-
     import uvicorn
 
     uvicorn.run(
