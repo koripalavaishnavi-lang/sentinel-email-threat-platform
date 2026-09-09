@@ -11,7 +11,6 @@ from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from dotenv import load_dotenv
-
 import base64
 import ipaddress
 import io
@@ -30,10 +29,8 @@ load_dotenv()
 
 VT_KEY = os.getenv("VIRUSTOTAL_API_KEY", "").strip()
 ABUSE_KEY = os.getenv("ABUSEIPDB_API_KEY", "").strip()
-
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
-
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
 GOOGLE_REDIRECT_URI = os.getenv(
@@ -57,9 +54,7 @@ GMAIL_SCOPES = [
 ]
 
 gmail_credentials = None
-
-# Stores OAuth state -> PKCE code verifier
-oauth_states = {}
+oauth_states = set()
 
 # =========================
 # APP
@@ -126,7 +121,6 @@ def db():
         raise RuntimeError(
             "DATABASE_URL is not configured in Render."
         )
-
     return psycopg2.connect(DATABASE_URL)
 
 
@@ -169,23 +163,14 @@ def save_gmail_credentials(credentials):
     conn = db()
     cur = conn.cursor()
 
+    cur.execute(
+        "DELETE FROM gmail_oauth"
+    )
+
     cur.execute("""
-        INSERT INTO gmail_oauth (
-            id,
-            token,
-            refresh_token,
-            token_uri,
-            scopes
-        )
+        INSERT INTO gmail_oauth
+        (id, token, refresh_token, token_uri, scopes)
         VALUES (1, %s, %s, %s, %s)
-        ON CONFLICT (id) DO UPDATE SET
-            token = EXCLUDED.token,
-            refresh_token = COALESCE(
-                EXCLUDED.refresh_token,
-                gmail_oauth.refresh_token
-            ),
-            token_uri = EXCLUDED.token_uri,
-            scopes = EXCLUDED.scopes
     """, (
         credentials.token,
         credentials.refresh_token,
@@ -235,8 +220,7 @@ def load_gmail_credentials():
             client_id=GOOGLE_CLIENT_ID,
             client_secret=GOOGLE_CLIENT_SECRET,
             scopes=json.loads(scopes)
-            if scopes
-            else GMAIL_SCOPES
+            if scopes else GMAIL_SCOPES
         )
 
     except Exception as e:
@@ -256,7 +240,7 @@ def delete_gmail_credentials():
         cur = conn.cursor()
 
         cur.execute(
-            "DELETE FROM gmail_oauth WHERE id = 1"
+            "DELETE FROM gmail_oauth"
         )
 
         conn.commit()
@@ -286,8 +270,8 @@ def extract_urls(text):
     )
 
     return list(dict.fromkeys(
-        u.rstrip(".,;:!?)]}")
-        for u in found
+        url.rstrip(".,;:!?)]}")
+        for url in found
     ))
 
 
@@ -355,10 +339,7 @@ def get_email_body(message):
         if (
             part.get_content_type() == "text/plain"
             and "attachment" not in str(
-                part.get(
-                    "Content-Disposition",
-                    ""
-                )
+                part.get("Content-Disposition", "")
             ).lower()
         ):
             try:
@@ -388,9 +369,7 @@ def analyze_authentication(message):
             else "Not Found"
         ),
         "authentication_results": (
-            message.get(
-                "Authentication-Results"
-            )
+            message.get("Authentication-Results")
             or "Not available"
         )
     }
@@ -417,6 +396,7 @@ def extract_pdf_text(data):
 
 
 def extract_pdf_email_fields(text):
+
     def field(patterns, default):
         for pattern in patterns:
             match = re.search(
@@ -492,12 +472,8 @@ def get_ip_geolocation(ip):
 
         return {
             "ip": ip,
-            "country": data.get(
-                "country_name"
-            ),
-            "country_code": data.get(
-                "country_code"
-            ),
+            "country": data.get("country_name"),
+            "country_code": data.get("country_code"),
             "region": data.get("region"),
             "city": data.get("city"),
             "postal": data.get("postal"),
@@ -544,8 +520,8 @@ def vt_confidence(stats):
         return 0
 
     total = sum(
-        stats.get(k, 0)
-        for k in (
+        stats.get(key, 0)
+        for key in (
             "malicious",
             "suspicious",
             "harmless",
@@ -566,7 +542,11 @@ def vt_confidence(stats):
     )
 
 
-def check_vt(indicator, kind, endpoint):
+def check_vt(
+    indicator,
+    kind,
+    endpoint
+):
     result = {
         "indicator": indicator,
         "type": kind,
@@ -617,7 +597,11 @@ def check_vt(indicator, kind, endpoint):
         result["status"] = vt_status(stats)
         result["confidence"] = vt_confidence(stats)
 
-    except Exception:
+    except Exception as e:
+        print(
+            "VirusTotal error:",
+            e
+        )
         result["source"] = (
             "VirusTotal request failed"
         )
@@ -642,13 +626,9 @@ def check_virustotal_domain(domain):
 
 
 def check_virustotal_url(url):
-    url_id = (
-        base64.urlsafe_b64encode(
-            url.encode()
-        )
-        .decode()
-        .rstrip("=")
-    )
+    url_id = base64.urlsafe_b64encode(
+        url.encode()
+    ).decode().rstrip("=")
 
     return check_vt(
         url,
@@ -738,7 +718,11 @@ def check_abuseipdb(ip):
             )
         })
 
-    except Exception:
+    except Exception as e:
+        print(
+            "AbuseIPDB error:",
+            e
+        )
         result["source"] = (
             "AbuseIPDB request failed"
         )
@@ -796,43 +780,34 @@ def check_ip_threat_intelligence(ip):
     local = local_ip_intelligence(ip)
 
     if local:
-        overall = local["status"]
-        confidence = local["confidence"]
-        source = local["source"]
+        return local
+
+    statuses = [
+        vt["status"],
+        abuse["status"]
+    ]
+
+    if "MALICIOUS" in statuses:
+        overall = "MALICIOUS"
+
+    elif "SUSPICIOUS" in statuses:
+        overall = "SUSPICIOUS"
+
+    elif "CLEAN" in statuses:
+        overall = "CLEAN"
 
     else:
-        statuses = [
-            vt["status"],
-            abuse["status"]
-        ]
-
-        if "MALICIOUS" in statuses:
-            overall = "MALICIOUS"
-
-        elif "SUSPICIOUS" in statuses:
-            overall = "SUSPICIOUS"
-
-        elif "CLEAN" in statuses:
-            overall = "CLEAN"
-
-        else:
-            overall = "UNKNOWN"
-
-        confidence = max(
-            vt["confidence"],
-            abuse["confidence"]
-        )
-
-        source = (
-            "Combined Threat Intelligence"
-        )
+        overall = "UNKNOWN"
 
     return {
         "indicator": ip,
         "type": "IP",
         "status": overall,
-        "confidence": confidence,
-        "source": source,
+        "confidence": max(
+            vt["confidence"],
+            abuse["confidence"]
+        ),
+        "source": "Combined Threat Intelligence",
         "sources": {
             "virustotal": vt,
             "abuseipdb": abuse
@@ -864,8 +839,8 @@ def calculate_risk(
     body,
     urls,
     domains,
-    ip_addresses,
-    authentication,
+    ips,
+    auth,
     threat_intelligence
 ):
     score = 0
@@ -876,13 +851,13 @@ def calculate_risk(
         f"{body or ''}"
     ).lower()
 
-    if authentication["spf"] == "Not Found":
+    if auth["spf"] == "Not Found":
         score += 10
         reasons.append(
             "SPF authentication not found"
         )
 
-    if authentication["dkim"] == "Not Found":
+    if auth["dkim"] == "Not Found":
         score += 10
         reasons.append(
             "DKIM signature not found"
@@ -898,8 +873,7 @@ def calculate_risk(
         )
 
     public_ips = [
-        ip
-        for ip in ip_addresses
+        ip for ip in ips
         if is_public_ip(ip)
     ]
 
@@ -908,7 +882,6 @@ def calculate_risk(
             len(public_ips) * 5,
             15
         )
-
         reasons.append(
             f"{len(public_ips)} "
             "public IP address(es) found"
@@ -946,15 +919,14 @@ def calculate_risk(
             len(found) * 5,
             25
         )
-
         reasons.append(
             "Suspicious/phishing keywords detected"
         )
 
     indicators = (
-        threat_intelligence.get("ips", [])
-        + threat_intelligence.get("domains", [])
-        + threat_intelligence.get("urls", [])
+        threat_intelligence["ips"]
+        + threat_intelligence["domains"]
+        + threat_intelligence["urls"]
     )
 
     malicious = [
@@ -974,10 +946,10 @@ def calculate_risk(
             len(malicious) * 30,
             70
         )
-
         reasons.append(
             "Threat intelligence identified "
-            f"{len(malicious)} malicious indicator(s)"
+            f"{len(malicious)} "
+            "malicious indicator(s)"
         )
 
     if suspicious:
@@ -985,13 +957,16 @@ def calculate_risk(
             len(suspicious) * 15,
             40
         )
-
         reasons.append(
             "Threat intelligence identified "
-            f"{len(suspicious)} suspicious indicator(s)"
+            f"{len(suspicious)} "
+            "suspicious indicator(s)"
         )
 
-    score = min(score, 100)
+    score = min(
+        score,
+        100
+    )
 
     return {
         "score": score,
@@ -1023,11 +998,8 @@ async def analyze_bytes(
         filename
     )[1].lower()
 
-    # -------------------------
-    # PDF
-    # -------------------------
-
     if extension == ".pdf":
+
         body = extract_pdf_text(
             file_bytes
         )
@@ -1066,11 +1038,8 @@ async def analyze_bytes(
         received_headers = []
         source_type = "PDF"
 
-    # -------------------------
-    # EML
-    # -------------------------
-
     elif extension == ".eml":
+
         message = BytesParser(
             policy=policy.default
         ).parsebytes(file_bytes)
@@ -1139,10 +1108,6 @@ async def analyze_bytes(
             )
         }
 
-    # -------------------------
-    # Indicators
-    # -------------------------
-
     urls = list(dict.fromkeys(
         extract_urls(body)
         + extract_urls(header_text)
@@ -1152,22 +1117,16 @@ async def analyze_bytes(
         urls
     )
 
-    ip_addresses = list(dict.fromkeys(
+    ips = list(dict.fromkeys(
         extract_ip_addresses(
             header_text
         )
-        + extract_ip_addresses(
-            body
-        )
+        + extract_ip_addresses(body)
     ))
-
-    # -------------------------
-    # Geolocation
-    # -------------------------
 
     geolocation = [
         location
-        for ip in ip_addresses
+        for ip in ips
         if is_public_ip(ip)
         for location in [
             get_ip_geolocation(ip)
@@ -1175,13 +1134,9 @@ async def analyze_bytes(
         if location
     ]
 
-    # -------------------------
-    # Threat Intelligence
-    # -------------------------
-
     ip_intelligence = [
         check_ip_threat_intelligence(ip)
-        for ip in ip_addresses
+        for ip in ips
         if is_public_ip(ip)
     ]
 
@@ -1250,7 +1205,7 @@ async def analyze_bytes(
         body,
         urls,
         domains,
-        ip_addresses,
+        ips,
         authentication,
         threat_intelligence
     )
@@ -1258,7 +1213,6 @@ async def analyze_bytes(
     return {
         "success": True,
         "source_type": source_type,
-
         "email": {
             "filename": filename,
             "sender": sender,
@@ -1267,14 +1221,12 @@ async def analyze_bytes(
             "date": formatted_date,
             "subject": subject
         },
-
         "forensics": {
             "urls": urls,
             "domains": domains,
-            "ip_addresses": ip_addresses,
+            "ip_addresses": ips,
             "received_headers": received_headers
         },
-
         "authentication": authentication,
         "geolocation": geolocation,
         "threat_intelligence": threat_intelligence,
@@ -1314,6 +1266,7 @@ async def analyze_email(
 # =========================
 
 def google_flow():
+
     if (
         not GOOGLE_CLIENT_ID
         or not GOOGLE_CLIENT_SECRET
@@ -1349,6 +1302,7 @@ def google_flow():
 
 @app.get("/api/auth/google")
 def google_login():
+
     try:
         flow = google_flow()
 
@@ -1356,18 +1310,13 @@ def google_login():
             32
         )
 
+        oauth_states.add(state)
+
         url, _ = flow.authorization_url(
             access_type="offline",
             include_granted_scopes="true",
             prompt="consent",
             state=state
-        )
-
-        # IMPORTANT:
-        # Save the PKCE verifier generated
-        # by this exact OAuth flow.
-        oauth_states[state] = (
-            flow.code_verifier
         )
 
         return RedirectResponse(url)
@@ -1387,6 +1336,7 @@ def google_callback(
     global gmail_credentials
 
     try:
+
         if (
             not code
             or state not in oauth_states
@@ -1395,19 +1345,9 @@ def google_callback(
                 f"{FRONTEND_URL}?gmail=error"
             )
 
-        # Recover the PKCE verifier
-        # from the original OAuth request.
-        code_verifier = oauth_states.pop(
-            state
-        )
+        oauth_states.discard(state)
 
-        # Create a new flow.
         flow = google_flow()
-
-        # IMPORTANT:
-        # Restore the verifier before
-        # exchanging the authorization code.
-        flow.code_verifier = code_verifier
 
         flow.fetch_token(
             code=code
@@ -1417,7 +1357,6 @@ def google_callback(
             flow.credentials
         )
 
-        # Persist credentials in PostgreSQL.
         save_gmail_credentials(
             gmail_credentials
         )
@@ -1427,6 +1366,7 @@ def google_callback(
         )
 
     except Exception as e:
+
         print(
             "Google OAuth error:",
             e
@@ -1443,7 +1383,6 @@ def google_callback(
 def gmail_service():
     global gmail_credentials
 
-    # Load from PostgreSQL after restart.
     if not gmail_credentials:
         gmail_credentials = (
             load_gmail_credentials()
@@ -1454,7 +1393,6 @@ def gmail_service():
             "Gmail is not connected."
         )
 
-    # Refresh expired credentials.
     if (
         gmail_credentials.expired
         and gmail_credentials.refresh_token
@@ -1480,7 +1418,9 @@ def gmail_service():
 
 @app.get("/api/gmail/status")
 def gmail_status():
+
     try:
+
         service = gmail_service()
 
         profile = (
@@ -1508,6 +1448,7 @@ def gmail_status():
         }
 
     except Exception as e:
+
         print(
             "Gmail status error:",
             e
@@ -1518,12 +1459,10 @@ def gmail_status():
             "connected": False
         }
 
-# =========================
-# GMAIL DISCONNECT
-# =========================
 
 @app.post("/api/gmail/disconnect")
 def gmail_disconnect():
+
     global gmail_credentials
 
     gmail_credentials = None
@@ -1545,9 +1484,13 @@ def gmail_messages(
     page_token: str = None
 ):
     try:
+
         max_results = max(
             1,
-            min(max_results, 100)
+            min(
+                max_results,
+                100
+            )
         )
 
         service = gmail_service()
@@ -1573,27 +1516,43 @@ def gmail_messages(
             "messages",
             []
         ):
+
             message_id = item.get(
                 "id"
             )
 
-            message = (
-                service.users()
-                .messages()
-                .get(
-                    userId="me",
-                    id=message_id,
-                    format="metadata",
-                    metadataHeaders=[
-                        "From",
-                        "To",
-                        "Subject",
-                        "Date",
-                        "Reply-To"
-                    ]
+            if not message_id:
+                continue
+
+            try:
+
+                message = (
+                    service.users()
+                    .messages()
+                    .get(
+                        userId="me",
+                        id=message_id,
+                        format="metadata",
+                        metadataHeaders=[
+                            "From",
+                            "To",
+                            "Subject",
+                            "Date",
+                            "Reply-To"
+                        ]
+                    )
+                    .execute()
                 )
-                .execute()
-            )
+
+            except Exception as e:
+
+                print(
+                    "Skipping Gmail message:",
+                    message_id,
+                    e
+                )
+
+                continue
 
             headers = {
                 header["name"].lower():
@@ -1659,6 +1618,7 @@ def gmail_messages(
         }
 
     except Exception as e:
+
         print(
             "Gmail messages error:",
             e
@@ -1670,10 +1630,11 @@ def gmail_messages(
         }
 
 # =========================
-# GMAIL ANALYSIS
+# GMAIL RAW DECODER
 # =========================
 
 def decode_gmail_raw(raw):
+
     padding = "=" * (
         (-len(raw)) % 4
     )
@@ -1682,24 +1643,87 @@ def decode_gmail_raw(raw):
         raw + padding
     )
 
+# =========================
+# GMAIL EMAIL ANALYSIS
+# =========================
 
-@app.get("/api/gmail/analyze/{message_id}")
+@app.get(
+    "/api/gmail/analyze/{message_id}"
+)
 async def analyze_gmail(
     message_id: str
 ):
     try:
+
         service = gmail_service()
 
-        message = (
-            service.users()
-            .messages()
-            .get(
-                userId="me",
-                id=message_id,
-                format="raw"
+        # First verify the message exists
+        # in the currently connected account.
+        try:
+
+            metadata = (
+                service.users()
+                .messages()
+                .get(
+                    userId="me",
+                    id=message_id,
+                    format="metadata",
+                    metadataHeaders=[
+                        "From",
+                        "To",
+                        "Subject",
+                        "Date",
+                        "Reply-To"
+                    ]
+                )
+                .execute()
             )
-            .execute()
-        )
+
+        except Exception as e:
+
+            print(
+                "Gmail message lookup error:",
+                e
+            )
+
+            return {
+                "success": False,
+                "error": (
+                    "Gmail message was not found "
+                    "in the connected account."
+                ),
+                "message_id": message_id
+            }
+
+        # Now retrieve the raw email.
+        try:
+
+            message = (
+                service.users()
+                .messages()
+                .get(
+                    userId="me",
+                    id=message_id,
+                    format="raw"
+                )
+                .execute()
+            )
+
+        except Exception as e:
+
+            print(
+                "Gmail raw message error:",
+                e
+            )
+
+            return {
+                "success": False,
+                "error": (
+                    "Gmail found the message but "
+                    "could not retrieve its raw content."
+                ),
+                "message_id": message_id
+            }
 
         raw = message.get(
             "raw"
@@ -1710,7 +1734,8 @@ async def analyze_gmail(
                 "success": False,
                 "error": (
                     "Gmail returned an empty email."
-                )
+                ),
+                "message_id": message_id
             }
 
         email_bytes = decode_gmail_raw(
@@ -1723,6 +1748,7 @@ async def analyze_gmail(
         )
 
         if result.get("success"):
+
             result["source_type"] = "GMAIL"
 
             result["email"][
@@ -1735,9 +1761,14 @@ async def analyze_gmail(
                 "threadId"
             )
 
+            result["email"][
+                "gmail_metadata"
+            ] = metadata
+
         return result
 
     except Exception as e:
+
         print(
             "Gmail analysis error:",
             e
@@ -1745,7 +1776,8 @@ async def analyze_gmail(
 
         return {
             "success": False,
-            "error": str(e)
+            "error": str(e),
+            "message_id": message_id
         }
 
 # =========================
@@ -1753,6 +1785,7 @@ async def analyze_gmail(
 # =========================
 
 if __name__ == "__main__":
+
     import uvicorn
 
     uvicorn.run(
